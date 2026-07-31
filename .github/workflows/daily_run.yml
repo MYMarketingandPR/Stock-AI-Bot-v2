@@ -2,30 +2,28 @@ name: Daily Stock AI Agent
 
 on:
   schedule:
-    # 這裡設定時間！Cron 是用格林威治時間 (UTC)
-    # 英國冬天是 UTC+0，夏天是 UTC+1。
-    # 設定 06:00 UTC，代表冬天早上 6 點，夏天早上 7 點執行。
     - cron: '0 6 * * *'
-  workflow_dispatch: # 讓你可以手動按按鈕測試
+  workflow_dispatch:
 
 jobs:
   run-agent:
     runs-on: ubuntu-latest
     steps:
       - name: 把房間的東西拿出來
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: 安裝 Python 大腦
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
       - name: 安裝小幫手工具
-        run: pip install requests google-genai
+        run: pip install requests google-genai finvizfinance pandas lxml yfinance
 
       - name: 執行魔法腳本！
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}
         run: python main.py

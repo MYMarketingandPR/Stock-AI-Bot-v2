@@ -21,8 +21,7 @@ def analyze_stock():
     prompt = "你是一個華爾街大師，請用一句話告訴我今天 TSLA 的股票狀態，並給出一個買入或觀望的建議。"
     
     response = client.models.generate_content(
-        model='gemini-1.5-flash',
-        contents=prompt,
+        model='gemini-1.5-flash', contents=prompt,
     )
     
     # 把大腦寫好的報告，加上標題

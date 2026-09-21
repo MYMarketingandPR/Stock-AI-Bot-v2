@@ -153,7 +153,8 @@ def main():
             print(f"正在分析 {ticker}...")
             prompt = load_prompt(ticker)
             response = client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='model='gemini-1.5-pro',
+',
                 contents=prompt,
                 config=types.GenerateContentConfig(temperature=0.2)
             )

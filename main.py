@@ -214,7 +214,7 @@ def main():
     
     send_telegram(f"⏳ **AI交易員已上線**\n📊 當前 VIX: `{vix:.2f}`\n🎯 自動啟用策略: {screener_name}")
     
-    tickers = run_screener(filters)
+    tickers = ["SNDK", "SKHY"]
     if not tickers:
         send_telegram("📊 **今日掃描結果**\n\n今日無符合嚴格條件的標的。紀律勝過預測，建議空倉觀望。")
         return

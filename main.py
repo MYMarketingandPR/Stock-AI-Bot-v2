@@ -4,13 +4,12 @@ import time
 from datetime import datetime
 import requests
 from finvizfinance.screener.technical import Technical
-from google import genai
-from google.genai import types
+from groq import Groq
 
 # ==========================================
-# 1. 鑰匙設定
+# 1. 鑰匙設定 (改為使用 GROQ_API_KEY)
 # ==========================================
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 SHEET_WEBHOOK_URL = os.environ.get("SHEET_WEBHOOK_URL")
@@ -58,7 +57,7 @@ def log_to_google_sheet(ticker, vix, screener_name, analysis_text):
         print(f"Google Sheets 網路請求失敗: {e}")
 
 # ==========================================
-# 3. 獲取 VIX 與 篩選器設定 (Finviz Bug 已修復)
+# 3. 獲取 VIX 與 篩選器設定
 # ==========================================
 def get_vix():
     try:
@@ -77,14 +76,13 @@ def get_breakout_filters():
         '50-Day Simple Moving Average': 'Price above SMA50',
         '200-Day Simple Moving Average': 'Price above SMA200',
         '52-Week High/Low': '0-5% below High',
-        'Gap': 'Up',  # 👈 這裡的 Bug 已經修復！
+        'Gap': 'Up',
         'Change from Open': 'Up 2%+',
         'Relative Volume': 'Over 2.5',
         'Performance (Week)': 'Over +5%'
     }
 
 def select_screener_by_vix(vix):
-    # 為了測試狙擊模式，策略名稱直接回傳
     return '🎯 單點狙擊模式 (無視大盤)', get_breakout_filters()
 
 # ==========================================
@@ -127,13 +125,12 @@ def load_prompt(ticker):
 """
 
 def risk_check_override(analysis_text, ticker):
-    # 為了確保你能收到測試報告，暫時調寬風控標準，不強制要求買入指令
     if "止損" not in analysis_text and "Stop-Loss" not in analysis_text:
         return False, "無止損設定"
     return True, "通過初步風控"
 
 # ==========================================
-# 5. 主程式執行 (強制鎖定 SNDK 與 SKHY)
+# 5. 主程式執行
 # ==========================================
 def main():
     print("啟動 AI 交易員...")
@@ -142,29 +139,39 @@ def main():
     
     send_telegram(f"⏳ **AI交易員已上線**\n📊 當前 VIX: `{vix:.2f}`\n🎯 自動啟用策略: {screener_name}")
     
-    # 🎯 終極狙擊模式：直接強制設定為這兩檔股票，跳過 Finviz 掃描！
+    # 🎯 終極狙擊模式
     tickers = ["SNDK", "SKHY"]
     
-    send_telegram(f"🎯 **今日精選: {', '.join(tickers)}**\n正在呼叫大腦進行 360 度深度診斷...")
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    send_telegram(f"🎯 **今日精選: {', '.join(tickers)}**\n正在呼叫 Llama-3 70B 大腦進行 360 度深度診斷...")
+    
+    if not GROQ_API_KEY:
+        error_msg = "❌ 系統錯誤：找不到 GROQ_API_KEY，請確認 GitHub Secrets 設定。"
+        print(error_msg)
+        send_telegram(error_msg)
+        return
+
+    # 啟動 Groq 引擎
+    client = Groq(api_key=GROQ_API_KEY)
     
     for ticker in tickers:
         try:
             print(f"正在分析 {ticker}...")
             prompt = load_prompt(ticker)
-            response = client.models.generate_content(
-                model='gemini-pro',
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.2)
+            
+            # 呼叫 Llama 3 70B 模型
+            response = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model="llama3-70b-8192",
+                temperature=0.2
             )
-            analysis = response.text
+            analysis = response.choices[0].message.content
             
             passed, reason = risk_check_override(analysis, ticker)
             if not passed:
                 send_telegram(f"⚠️ **【{ticker}】 遭紅隊系統否決**\n⛔ 原因: {reason}\n_系統已自動捨棄該標的。_")
                 continue
             
-            send_telegram(f"🔥 **【{ticker}】 機密備忘錄** 🔥\n\n{analysis[:3800]}")
+            send_telegram(f"🔥 **【{ticker}】 機密備忘錄 (Powered by Groq)** 🔥\n\n{analysis[:3800]}")
             log_to_google_sheet(ticker, vix, screener_name, analysis)
             time.sleep(8) 
             

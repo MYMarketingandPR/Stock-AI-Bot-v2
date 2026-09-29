@@ -88,7 +88,7 @@ def get_breakout_filters():
         '52-Week High/Low': '0-5% below High',
         'Gap': 'Up',
         'Change from Open': 'Up 2%',
-        'Relative Volume': 'Over 2.5',
+        'Relative Volume': 'Over 2',
         'Performance (Week)': 'Over +5%'
     }
 

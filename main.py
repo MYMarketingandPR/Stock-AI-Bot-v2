@@ -7,7 +7,17 @@ from finvizfinance.screener.technical import Technical
 from groq import Groq
 
 # ==========================================
-# 1. 鑰匙設定 (改為使用 GROQ_API_KEY)
+# 0. 系統模式切換開關 (超方便設定區)
+# ==========================================
+# 請填入 "AUTO" (全自動海選) 或 "SNIPER" (單點狙擊)
+RUN_MODE = "AUTO" 
+
+# 如果使用 "SNIPER" 模式，請在這裡填入你想狙擊的股票代碼
+SNIPER_TICKERS = ["SNDK", "MRNA"]
+
+
+# ==========================================
+# 1. 鑰匙設定
 # ==========================================
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -15,7 +25,7 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 SHEET_WEBHOOK_URL = os.environ.get("SHEET_WEBHOOK_URL")
 
 # ==========================================
-# 2. 推送模組
+# 2. 推送與紀錄模組
 # ==========================================
 def send_telegram(text):
     if not BOT_TOKEN or not CHAT_ID:
@@ -57,7 +67,7 @@ def log_to_google_sheet(ticker, vix, screener_name, analysis_text):
         print(f"Google Sheets 網路請求失敗: {e}")
 
 # ==========================================
-# 3. 獲取 VIX 與 篩選器設定
+# 3. 策略與 Finviz 篩選模組
 # ==========================================
 def get_vix():
     try:
@@ -83,7 +93,22 @@ def get_breakout_filters():
     }
 
 def select_screener_by_vix(vix):
-    return '🎯 單點狙擊模式 (無視大盤)', get_breakout_filters()
+    if vix < 18:
+        return '🔥 右側爆量突破 (VIX < 18)', get_breakout_filters()
+    else:
+        return '🛡️ 嚴格防守突破 (VIX >= 18)', get_breakout_filters()
+
+def run_screener(filters):
+    try:
+        screener = Technical()
+        screener.set_filter(filter_dict=filters)
+        df = screener.screener_view()
+        if df.empty:
+            return []
+        return df['Ticker'].head(3).tolist()
+    except Exception as e:
+        print(f"Finviz 篩選失敗: {e}")
+        return []
 
 # ==========================================
 # 4. AI 提示詞與風控
@@ -130,27 +155,39 @@ def risk_check_override(analysis_text, ticker):
     return True, "通過初步風控"
 
 # ==========================================
-# 5. 主程式執行
+# 5. 主程式執行 (雙模式支援)
 # ==========================================
 def main():
-    print("啟動 AI 交易員...")
-    vix = get_vix()
-    screener_name, _ = select_screener_by_vix(vix)
-    
-    send_telegram(f"⏳ **AI交易員已上線**\n📊 當前 VIX: `{vix:.2f}`\n🎯 自動啟用策略: {screener_name}")
-    
-    # 🎯 終極狙擊模式
-    tickers = ["SNDK", "SKHY"]
-    
-    send_telegram(f"🎯 **今日精選: {', '.join(tickers)}**\n正在呼叫 Llama-3 70B 大腦進行 360 度深度診斷...")
+    print(f"啟動 AI 交易員... 當前模式: {RUN_MODE}")
     
     if not GROQ_API_KEY:
-        error_msg = "❌ 系統錯誤：找不到 GROQ_API_KEY，請確認 GitHub Secrets 設定。"
+        error_msg = "❌ 系統錯誤：找不到 GROQ_API_KEY。"
         print(error_msg)
         send_telegram(error_msg)
         return
 
-    # 啟動 Groq 引擎
+    vix = get_vix()
+    
+    # 根據開關決定標的來源
+    if RUN_MODE == "SNIPER":
+        screener_name = "🎯 單點狙擊模式"
+        tickers = SNIPER_TICKERS
+        send_telegram(f"⏳ **AI交易員已上線**\n📊 當前 VIX: `{vix:.2f}`\n🎯 啟動模式: {screener_name}\n🔍 已鎖定狙擊標的: {', '.join(tickers)}")
+        
+    else: # 預設為 AUTO
+        screener_name, filters = select_screener_by_vix(vix)
+        send_telegram(f"⏳ **AI交易員已上線**\n📊 當前 VIX: `{vix:.2f}`\n🎯 自動啟用策略: {screener_name}\n🔍 正在掃描全市場符合條件之標的...")
+        tickers = run_screener(filters)
+
+    # 檢查是否有股票可以分析
+    if not tickers:
+        msg = "⚠️ 今日無符合嚴格條件的標的，AI 交易員提早下班。"
+        print(msg)
+        send_telegram(msg)
+        return
+        
+    send_telegram(f"🎯 **今日出線標的: {', '.join(tickers)}**\n正在呼叫 GPT-OSS-120B 大腦進行深度診斷...")
+    
     client = Groq(api_key=GROQ_API_KEY)
     
     for ticker in tickers:
@@ -158,7 +195,6 @@ def main():
             print(f"正在分析 {ticker}...")
             prompt = load_prompt(ticker)
             
-            # 呼叫 Llama 3 70B 模型
             response = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 model="openai/gpt-oss-120b",
@@ -173,7 +209,7 @@ def main():
             
             send_telegram(f"🔥 **【{ticker}】 機密備忘錄 (Powered by Groq)** 🔥\n\n{analysis[:3800]}")
             log_to_google_sheet(ticker, vix, screener_name, analysis)
-            time.sleep(8) 
+            time.sleep(5) 
             
         except Exception as e:
             error_msg = f"❌ 分析 {ticker} 時發生錯誤: {e}"

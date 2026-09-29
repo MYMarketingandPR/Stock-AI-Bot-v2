@@ -87,7 +87,7 @@ def get_breakout_filters():
         '200-Day Simple Moving Average': 'Price above SMA200',
         '52-Week High/Low': '0-5% below High',
         'Gap': 'Up',
-        'Change from Open': 'Up 2%+',
+        'Change from Open': 'Up 2%',
         'Relative Volume': 'Over 2.5',
         'Performance (Week)': 'Over +5%'
     }

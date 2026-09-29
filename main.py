@@ -161,7 +161,7 @@ def main():
             # 呼叫 Llama 3 70B 模型
             response = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
-                model="llama3-70b-8192",
+                model="llama-3.1-70b-versatile",
                 temperature=0.2
             )
             analysis = response.choices[0].message.content

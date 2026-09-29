@@ -101,7 +101,7 @@ def select_screener_by_vix(vix):
 def run_screener(filters):
     try:
         screener = Technical()
-        screener.set_filter(filter_dict=filters)
+        screener.set_filter(filters_dict=filters)
         df = screener.screener_view()
         if df.empty:
             return []

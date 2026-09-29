@@ -80,7 +80,7 @@ def get_vix():
 
 def get_breakout_filters():
     return {
-        'Market Cap.': '+Small ($300M over)',
+        'Market Cap.': '+Small (over $300mln)',
         'Price': 'Over $15',
         'Average Volume': 'Over 500K',
         '50-Day Simple Moving Average': 'Price above SMA50',

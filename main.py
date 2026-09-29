@@ -102,8 +102,11 @@ def run_screener(filters):
         screener = Technical()
         screener.set_filter(filters_dict=filters)
         df = screener.screener_view()
-        if df.empty:
+        
+        # 👈 修正這裡：先檢查 df 是否為 None (找不到股票時)
+        if df is None or df.empty:
             return []
+            
         return df['Ticker'].head(3).tolist()
     except Exception as e:
         print(f"Finviz 篩選失敗: {e}")

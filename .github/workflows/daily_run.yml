@@ -11,19 +11,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 把房間的東西拿出來
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: 安裝 Python 大腦
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: 安裝小幫手工具
-        run: pip install groq finvizfinance pandas lxml yfinance
+        run: pip install requests groq finvizfinance pandas lxml yfinance
 
       - name: 執行魔法腳本！
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}

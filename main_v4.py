@@ -41,14 +41,12 @@ def send_telegram(text):
 def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
     if not SHEET_WEBHOOK_URL:
         return
-    ev_match = re.search(r"期望值.*?EV.*?([+-]?\d+\.?\d*)\s*%", analysis_text, re.IGNORECASE)
-    ev = ev_match.group(1) if ev_match else "N/A"
-    
-    pivot_match = re.search(r"(?:Pivot|買入價|試探倉).*?\$?(\d+\.?\d*)", analysis_text, re.IGNORECASE)
-    pivot = pivot_match.group(1) if pivot_match else "手動查閱"
-    
-    stop_match = re.search(r"(?:止損|Stop-Loss).*?\$?(\d+\.?\d*)", analysis_text, re.IGNORECASE)
-    stop_loss = stop_match.group(1) if stop_match else "手動查閱"
+# 支援各種奇怪的負號與表格空白
+    ev_match = re.search(r"期望值.*?EV.*?([-+−‑]?\s*\d+\.?\d*)\s*%", analysis_text, re.IGNORECASE)
+    # 增加 Entry、進場 等關鍵字
+    pivot_match = re.search(r"(?:Pivot|買入價|試探倉|Entry|進場).*?\$?(\d+\.?\d*)", analysis_text, re.IGNORECASE)
+    # 增加 Stop 關鍵字
+    stop_match = re.search(r"(?:止損|Stop-Loss|Stop).*?\$?(\d+\.?\d*)", analysis_text, re.IGNORECASE)
 
     data = {
         "date": datetime.now().strftime("%Y-%m-%d"),

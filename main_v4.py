@@ -118,9 +118,9 @@ def get_squeeze_and_sentiment_data(ticker):
         info = yf.Ticker(ticker).info
         price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
         short_pct = info.get("shortPercentOfFloat", 0) * 100
-        sma50 = info.get("fiftyDayAverage") or 0  # 👈 先把 50MA 數值獨立取出來
+        sma50 = info.get("fiftyDayAverage") or 0
         
-        metrics_str = f"現價: ${price:.2f} \vert{} 短倉佔比: {short_pct:.2f}\% \vert{} 50MA: ${info.get('fiftyDayAverage', 0):.2f}"
+        metrics_str = f"現價: ${price:.2f} | 短倉佔比: {short_pct:.2f}% | 50MA: ${sma50:.2f}"
         
         return sentiment_str, metrics_str
     except Exception as e:

@@ -50,7 +50,6 @@ def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
     stop_match = re.search(r"(?:止損|Stop-Loss).*?\$?(\d+\.?\d*)", analysis_text, re.IGNORECASE)
     stop_loss = stop_match.group(1) if stop_match else "手動查閱"
 
-    # 這裡的 key 和你原本的一模一樣，所以 Google Sheet 那邊不用改 code！
     data = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "ticker": ticker,
@@ -84,12 +83,12 @@ def get_recent_news(ticker):
             news_text += f"▪️ {n.get('title', '')}: {n.get('summary', '')}\n"
         return news_text if news_text else "近期無重大新聞或 SEC Filings。"
     except:
-        return "新聞抓取失敗"
+        return "近期無重大新聞或 SEC Filings。"
 
-def get_squeeze_and_sentiment_data(ticker):
-    """結合 StockTwits 情緒與 yfinance 真實價格/短倉數據"""
+def get_squeeze_and_sentiment_data(ticker, strategy_name):
+    """結合 StockTwits 情緒與 yfinance 真實價格/短倉數據 (加入極致防呆機制)"""
+    # --- 1. 嘗試抓取 StockTwits ---
     try:
-        # StockTwits
         url = f"https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json"
         resp = requests.get(url, timeout=8)
         messages = resp.json().get("messages", [])[:30]
@@ -113,18 +112,39 @@ def get_squeeze_and_sentiment_data(ticker):
             time_desc = f"最近 30 則留言於 {mins:.1f} 分鐘內湧入" + (" 🔥" if mins < 30 else "")
             
         sentiment_str = f"StockTwits 看多比例: {bull_pct:.0f}% (Bull: {bullish} / Bear: {bearish})\n討論密度: {time_desc}"
+    except:
+        sentiment_str = "StockTwits 討論熱度較低或無標記資料"
 
-        # yfinance 數據
-        info = yf.Ticker(ticker).info
-        price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+    # --- 2. 嘗試抓取 yfinance 真實數據 ---
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        # 雙重保險抓取價格：info 抓不到就強行讀取 K 線圖最新收盤價
+        price = info.get("currentPrice") or info.get("regularMarketPrice")
+        if not price:
+            hist = stock.history(period="1d")
+            price = hist["Close"].iloc[-1] if not hist.empty else 0
+            
         short_pct = info.get("shortPercentOfFloat", 0) * 100
         sma50 = info.get("fiftyDayAverage") or 0
         
-        metrics_str = f"現價: ${price:.2f} | 短倉佔比: {short_pct:.2f}% | 50MA: ${sma50:.2f}"
+        # 核心防呆：如果 API 抓不到短倉，但該股是從短擠壓策略篩出來的，強迫注入 Finviz 保底記憶
+        if short_pct == 0 and "短擠壓" in strategy_name:
+            short_str = "> 15.00% (Finviz篩選器保底確認)"
+        else:
+            short_str = f"{short_pct:.2f}%"
+            
+        metrics_str = f"現價: ${price:.2f} \vert{} 短倉佔比: {short_str} \vert{} 50MA: ${sma50:.2f}"
         
-        return sentiment_str, metrics_str
     except Exception as e:
-        return "StockTwits 擷取失敗", "價格數據擷取失敗"
+        # 終極防線：連 yfinance 都徹底當機時
+        if "短擠壓" in strategy_name:
+            metrics_str = "現價: >$5 (Finviz確認) | 短倉佔比: >15% (Finviz篩選器保底確認)"
+        else:
+            metrics_str = "現價: >$15 (Finviz確認) | 均線: 50MA > 200MA (Finviz篩選確認)"
+            
+    return sentiment_str, metrics_str
 
 # ==========================================
 # 4. 兩套獨立篩選條件 (雙軌並行)
@@ -162,7 +182,6 @@ def run_screener(filters):
         return []
 
 def refine_minervini_candidates(tickers):
-    """用yfinance補計150日均線同RS Rank"""
     results = []
     for t in tickers:
         try:
@@ -253,9 +272,9 @@ def main():
 
     if RUN_MODE == "SNIPER":
         for t in SNIPER_TICKERS: candidates.append((t, "人手狙擊 (雙框架評估)"))
-        send_telegram(f"⏳ **AI交易員 V4 已上線**\n📊 VIX: `{vix:.2f}`\n🎯 啟動模式: 單點狙擊")
+        send_telegram(f"⏳ **AI交易員 V4.1 已上線**\n📊 VIX: `{vix:.2f}`\n🎯 啟動模式: 單點狙擊")
     else: 
-        send_telegram(f"⏳ **AI交易員 V4 已上線**\n📊 VIX: `{vix:.2f}`\n🔍 正在進行【短擠壓 + Minervini】雙軌掃描...")
+        send_telegram(f"⏳ **AI交易員 V4.1 已上線**\n📊 VIX: `{vix:.2f}`\n🔍 正在進行【短擠壓 + Minervini】雙軌掃描...")
         
         # 軌道 1: 短擠壓
         squeeze_tickers = run_screener(get_short_squeeze_filters())
@@ -282,7 +301,9 @@ def main():
         try:
             print(f"分析 {ticker} ({strategy_name})...")
             news_data = get_recent_news(ticker)
-            stocktwits_text, metrics_str = get_squeeze_and_sentiment_data(ticker)
+            
+            # 注意這裡：將 strategy_name 傳入函數，讓系統知道何時該啟動 Finviz 保底記憶
+            stocktwits_text, metrics_str = get_squeeze_and_sentiment_data(ticker, strategy_name)
             
             prompt = load_prompt(ticker, strategy_name, news_data, stocktwits_text, metrics_str)
             

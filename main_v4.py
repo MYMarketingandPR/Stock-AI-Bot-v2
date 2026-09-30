@@ -135,17 +135,18 @@ def get_squeeze_and_sentiment_data(ticker, strategy_name):
         else:
             short_str = f"{short_pct:.2f}%"
             
-        metrics_str = f"現價: ${price:.2f} \vert{} 短倉佔比: {short_str} \vert{} 50MA: ${sma50:.2f}"
+        # 這裡全部改用連字號，徹底避開 \vert{} 亂碼！
+        metrics_str = f"現價: ${price:.2f} - 短倉佔比: {short_str} - 50MA: ${sma50:.2f}"
         
     except Exception as e:
         # 終極防線：連 yfinance 都徹底當機時
         if "短擠壓" in strategy_name:
-            metrics_str = "現價: >$5 (Finviz確認) | 短倉佔比: >15% (Finviz篩選器保底確認)"
+            metrics_str = "現價: >$5 (Finviz確認) - 短倉佔比: >15% (Finviz篩選器保底確認)"
         else:
-            metrics_str = "現價: >$15 (Finviz確認) | 均線: 50MA > 200MA (Finviz篩選確認)"
+            metrics_str = "現價: >$15 (Finviz確認) - 均線: 50MA > 200MA (Finviz篩選確認)"
             
     return sentiment_str, metrics_str
-
+     
 # ==========================================
 # 4. 兩套獨立篩選條件 (雙軌並行)
 # ==========================================

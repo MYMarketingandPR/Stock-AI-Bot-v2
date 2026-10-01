@@ -36,20 +36,20 @@ def send_telegram(text):
             payload["parse_mode"] = None 
             requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f"Telegram 推送失敗: {e}")
+        print(f"Telegram 推送失敗: {
 
+            
 def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
     if not SHEET_WEBHOOK_URL:
         return
         
-    # 支援各種奇怪的負號與表格空白
-    ev_match = re.search(r"期望值.*?EV.*?([-+−‑]?\s*\d+\.?\d*)\s*%", analysis_text, re.IGNORECASE)
-    # 增加 Entry、進場、買入點 等關鍵字
-    pivot_match = re.search(r"(?:Pivot|買入價|試探倉|Entry|進場|買入點).*?\$?(\d+\.?\d*)", analysis_text, re.IGNORECASE)
-    # 增加 Stop 關鍵字
-    stop_match = re.search(r"(?:止損|Stop-Loss|Stop).*?\$?(\d+\.?\d*)", analysis_text, re.IGNORECASE)
+    # EV 抓取：忽略 EV 和數字中間的雜訊，專心找 % 前的數字
+    ev_match = re.search(r"EV[^\d+−‑-]*([-+−‑]?\s*\d+\.?\d*)\s*%", analysis_text, re.IGNORECASE)
+    
+    # 價格抓取：強制鎖定 \$ 符號！徹底過濾掉 % 數、天數或倍數的干擾
+    pivot_match = re.search(r"(?:Entry|買入價|買入點|進場).*?\$(\d+\.?\d*)", analysis_text, re.IGNORECASE)
+    stop_match = re.search(r"(?:Stop-Loss|止損|Stop).*?\$(\d+\.?\d*)", analysis_text, re.IGNORECASE)
 
-    # 補回遺失的變數賦值
     ev = ev_match.group(1) if ev_match else "N/A"
     pivot = pivot_match.group(1) if pivot_match else "手動查閱"
     stop_loss = stop_match.group(1) if stop_match else "手動查閱"
@@ -67,6 +67,7 @@ def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
         requests.post(SHEET_WEBHOOK_URL, json=data, timeout=10)
     except Exception as e:
         print(f"Google Sheets 網路請求失敗: {e}")
+
 
 # ==========================================
 # 3. 市場數據、新聞、StockTwits 與真實數值擷取

@@ -35,9 +35,8 @@ def send_telegram(text):
         if response.status_code == 400: 
             payload["parse_mode"] = None 
             requests.post(url, json=payload, timeout=10)
-        except Exception as e:
+    except Exception as e:
         print(f"Telegram 推送失敗: {e}")
-
 
 def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
     if not SHEET_WEBHOOK_URL:
@@ -67,7 +66,6 @@ def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
         requests.post(SHEET_WEBHOOK_URL, json=data, timeout=10)
     except Exception as e:
         print(f"Google Sheets 網路請求失敗: {e}")
-
 
 # ==========================================
 # 3. 市場數據、新聞、StockTwits 與真實數值擷取
@@ -140,7 +138,7 @@ def get_squeeze_and_sentiment_data(ticker, strategy_name):
         else:
             short_str = f"{short_pct:.2f}%"
             
-        # 這裡全部改用連字號，徹底避開 \vert{} 亂碼！
+        # 這裡全部改用連字號，徹底避開 \vert 亂碼！
         metrics_str = f"現價: ${price:.2f} - 短倉佔比: {short_str} - 50MA: ${sma50:.2f}"
         
     except Exception as e:
@@ -151,7 +149,7 @@ def get_squeeze_and_sentiment_data(ticker, strategy_name):
             metrics_str = "現價: >$15 (Finviz確認) - 均線: 50MA > 200MA (Finviz篩選確認)"
             
     return sentiment_str, metrics_str
-     
+
 # ==========================================
 # 4. 兩套獨立篩選條件 (雙軌並行)
 # ==========================================

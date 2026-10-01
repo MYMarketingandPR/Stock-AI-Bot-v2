@@ -42,16 +42,28 @@ def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
     if not SHEET_WEBHOOK_URL:
         return
         
-    # EV 抓取：忽略 EV 和數字中間的雜訊，專心找 % 前的數字
-    ev_match = re.search(r"EV[^\d+−‑-]*([-+−‑]?\s*\d+\.?\d*)\s*%", analysis_text, re.IGNORECASE)
-    
-    # 價格抓取：強制鎖定 \$ 符號！徹底過濾掉 % 數、天數或倍數的干擾
-    pivot_match = re.search(r"(?:Entry|買入價|買入點|進場).*?\$(\d+\.?\d*)", analysis_text, re.IGNORECASE)
-    stop_match = re.search(r"(?:Stop-Loss|止損|Stop).*?\$(\d+\.?\d*)", analysis_text, re.IGNORECASE)
+    ev = "N/A"
+    pivot = "手動查閱"
+    stop_loss = "手動查閱"
 
-    ev = ev_match.group(1) if ev_match else "N/A"
-    pivot = pivot_match.group(1) if pivot_match else "手動查閱"
-    stop_loss = stop_match.group(1) if stop_match else "手動查閱"
+    # 1. 抓取 EV (期望值)：尋找 "期望值" 或 "EV" 後面出現的數字
+    ev_match = re.search(r"(?:期望值|EV)[^|\n:]*[:|]?\s*([-+−‑]?\s*\d+\.?\d*)", analysis_text, re.IGNORECASE)
+    if ev_match:
+        ev = ev_match.group(1).replace(" ", "")
+
+    # 2. 逐行精準拆解 Entry 與 Stop-Loss
+    for line in analysis_text.split("\n"):
+        # 抓取 Entry / 買入點 (抓取該行最後一個 $ 價位，避開說明文中的 MA 或 % 干擾)
+        if pivot == "手動查閱" and re.search(r"(?:Entry|買入價|買入點|進場|試探買入)", line, re.IGNORECASE):
+            prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
+            if prices:
+                pivot = prices[-1]
+
+        # 抓取 Stop-Loss / 止損 (抓取該行最後一個 $ 價位，完美過濾掉 ATR≈$1.2 等說明)
+        if stop_loss == "手動查閱" and re.search(r"(?:Stop-Loss|止損|Stop位|硬性止損)", line, re.IGNORECASE):
+            prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
+            if prices:
+                stop_loss = prices[-1]
 
     data = {
         "date": datetime.now().strftime("%Y-%m-%d"),
@@ -123,7 +135,6 @@ def get_squeeze_and_sentiment_data(ticker, strategy_name):
         stock = yf.Ticker(ticker)
         info = stock.info
         
-        # 雙重保險抓取價格：info 抓不到就強行讀取 K 線圖最新收盤價
         price = info.get("currentPrice") or info.get("regularMarketPrice")
         if not price:
             hist = stock.history(period="1d")
@@ -132,17 +143,14 @@ def get_squeeze_and_sentiment_data(ticker, strategy_name):
         short_pct = info.get("shortPercentOfFloat", 0) * 100
         sma50 = info.get("fiftyDayAverage") or 0
         
-        # 核心防呆：如果 API 抓不到短倉，但該股是從短擠壓策略篩出來的，強迫注入 Finviz 保底記憶
         if short_pct == 0 and "短擠壓" in strategy_name:
             short_str = "> 15.00% (Finviz篩選器保底確認)"
         else:
             short_str = f"{short_pct:.2f}%"
             
-        # 這裡全部改用連字號，徹底避開 \vert 亂碼！
         metrics_str = f"現價: ${price:.2f} - 短倉佔比: {short_str} - 50MA: ${sma50:.2f}"
         
     except Exception as e:
-        # 終極防線：連 yfinance 都徹底當機時
         if "短擠壓" in strategy_name:
             metrics_str = "現價: >$5 (Finviz確認) - 短倉佔比: >15% (Finviz篩選器保底確認)"
         else:
@@ -293,7 +301,7 @@ def main():
                 for t in top["ticker"]: candidates.append((t, "Minervini (Trend Template)"))
 
     if not candidates:
-        msg = "⚠️ 今日雙策略皆無符合嚴格條件的標的，AI 提早下班。"
+        msg = "⚠️️ 今日雙策略皆無符合嚴格條件的標的，AI 提早下班。"
         print(msg); send_telegram(msg); return
         
     names = ", ".join(f"{t}({s.split(' ')[0]})" for t, s in candidates)
@@ -305,8 +313,6 @@ def main():
         try:
             print(f"分析 {ticker} ({strategy_name})...")
             news_data = get_recent_news(ticker)
-            
-            # 注意這裡：將 strategy_name 傳入函數，讓系統知道何時該啟動 Finviz 保底記憶
             stocktwits_text, metrics_str = get_squeeze_and_sentiment_data(ticker, strategy_name)
             
             prompt = load_prompt(ticker, strategy_name, news_data, stocktwits_text, metrics_str)

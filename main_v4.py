@@ -38,7 +38,6 @@ def send_telegram(text):
     except Exception as e:
         print(f"Telegram 推送失敗: {
 
-            
 def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
     if not SHEET_WEBHOOK_URL:
         return

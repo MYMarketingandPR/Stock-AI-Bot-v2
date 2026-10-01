@@ -51,47 +51,27 @@ def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
     if ev_match:
         ev = ev_match.group(1).replace(" ", "")
 
-    # 2. 精準抓取 Entry / Pivot 買入價 (支援 Unicode 劃線與 Markdown 表格結構)
-    pivot_patterns = [
-        r"\|\s*(?:Entry|買入點|買入價|試探買入|進場)[^|\n]*\|[^|\n]*\|\s*\$\s*(\d+\.?\d*)", # 三欄式表格最右欄
-        r"\|\s*(?:Entry|買入點|買入價|試探買入|進場)[^|\n]*\|\s*\$\s*(\d+\.?\d*)",          # 兩欄式表格
-        r"(?:Entry|買入點|買入價|進場點)\s*[:：=]\s*\$\s*(\d+\.?\d*)"                       # 標準冒號鍵值對
-    ]
-    for pattern in pivot_patterns:
-        m = re.search(pattern, analysis_text, re.IGNORECASE)
-        if m:
-            pivot = m.group(1)
-            break
+    # 2. 逐行掃描 Entry 與 Stop-Loss（抓取關鍵字行出現的第一個 $ 數字，無視表格欄位數）
+    for line in analysis_text.split("\n"):
+        if pivot == "手動查閱" and re.search(r"(?:Entry|買入價|買入點|試探買入|進場)", line, re.IGNORECASE):
+            prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
+            if prices:
+                pivot = prices[0]
 
-    # 備用 Pivot：逐行尋找行首為 Entry/買入 的行，取最後一個帶 $ 的數字
-    if pivot == "手動查閱":
-        for line in analysis_text.split("\n"):
-            if re.search(r"^\s*\|?\s*(?:Entry|買入價|買入點|試探買入)\b", line, re.IGNORECASE):
-                prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
-                if prices:
-                    pivot = prices[-1]
-                    break
+        if stop_loss == "手動查閱" and re.search(r"(?:Stop[-‑–—]?Loss|硬性止損|止損位|止損點|止損)", line, re.IGNORECASE):
+            prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
+            if prices:
+                stop_loss = prices[0]
 
-    # 3. 精準抓取 Stop-Loss 止損價 (專利正則：跳過中間說明欄，只取最右邊 $ 價格)
-    stop_patterns = [
-        r"\|\s*(?:Stop[-‑–—]?Loss|硬性止損|止損位|止損)[^|\n]*\|[^|\n]*\|\s*\$\s*(\d+\.?\d*)", # 三欄式表格最右欄
-        r"\|\s*(?:Stop[-‑–—]?Loss|硬性止損|止損位|止損)[^|\n]*\|\s*\$\s*(\d+\.?\d*)",         # 兩欄式表格
-        r"(?:Stop[-‑–—]?Loss|硬性止損|止損位|止損點)\s*[:：=]\s*\$\s*(\d+\.?\d*)"              # 標準冒號鍵值對
-    ]
-    for pattern in stop_patterns:
-        m = re.search(pattern, analysis_text, re.IGNORECASE)
-        if m:
-            stop_loss = m.group(1)
-            break
-
-    # 備用 Stop-Loss：逐行尋找行首為 Stop/止損 的行，取最後一個帶 $ 的數字
-    if stop_loss == "手動查閱":
-        for line in analysis_text.split("\n"):
-            if re.search(r"^\s*\|?\s*(?:Stop[-‑–—]?Loss|硬性止損|止損位|止損點)\b", line, re.IGNORECASE):
-                prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
-                if prices:
-                    stop_loss = prices[-1]
-                    break
+    # 3. 風控守門員：檢查「做多策略」下，止損價是否荒謬地高於入場價
+    try:
+        p_val = float(pivot)
+        s_val = float(stop_loss)
+        if s_val >= p_val:
+            stop_loss = f"{s_val}(⚠️顛倒)"
+            print(f"⚠️ 警告：{ticker} 止損價 (${s_val}) 高於入場價 (${p_val})，AI 點位邏輯錯誤！")
+    except:
+        pass
 
     data = {
         "date": datetime.now().strftime("%Y-%m-%d"),
@@ -129,8 +109,7 @@ def get_recent_news(ticker):
         return "近期無重大新聞或 SEC Filings。"
 
 def get_squeeze_and_sentiment_data(ticker, strategy_name):
-    """結合 StockTwits 情緒與 yfinance 真實價格/短倉數據 (加入極致防呆機制)"""
-    # --- 1. 嘗試抓取 StockTwits ---
+    """結合 StockTwits 情緒與 yfinance 真實價格/短倉數據"""
     try:
         url = f"https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json"
         resp = requests.get(url, timeout=8)
@@ -158,7 +137,6 @@ def get_squeeze_and_sentiment_data(ticker, strategy_name):
     except:
         sentiment_str = "StockTwits 討論熱度較低或無標記資料"
 
-    # --- 2. 嘗試抓取 yfinance 真實數據 ---
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
@@ -248,7 +226,7 @@ def refine_minervini_candidates(tickers):
     return df_res.sort_values("rs_rank", ascending=False)
 
 # ==========================================
-# 5. AI 提示詞 (動態邏輯 + 真實數據輸入)
+# 5. AI 提示詞 (強調 Stop-Loss 必須小於 Entry)
 # ==========================================
 STRATEGY_DESC = {
     "短擠壓 (Short Squeeze)": "高空倉比率被逼平倉的軋空邏輯。基本面不重要，專注於空單結構、散戶情緒與成交量爆發。",
@@ -288,6 +266,7 @@ def load_prompt(ticker, strategy_name, news_text, stocktwits_text, metrics_str):
 
 階段三：技術面與極致風控 (需基於上方真實報價)
 1. 標出最佳 Entry 買入價與硬性止損點位 (Stop-Loss)。
+⚠️ 注意：此為「做多買入」交易！硬性止損點位 (Stop-Loss) 必須嚴格「低於」Entry 買入價（例如 Entry $48.50，Stop-Loss 必須設在 $45.00），絕不可高於買入價！
 2. 目標價 T1/T2，展示 RRR ≥ 3:1。
 
 階段四：紅隊壓力測試
@@ -312,9 +291,9 @@ def main():
 
     if RUN_MODE == "SNIPER":
         for t in SNIPER_TICKERS: candidates.append((t, "人手狙擊 (雙框架評估)"))
-        send_telegram(f"⏳ **AI交易員 V4.1 已上線**\n📊 VIX: `{vix:.2f}`\n🎯 啟動模式: 單點狙擊")
+        send_telegram(f"⏳ **AI交易員 V4.2 已上線**\n📊 VIX: `{vix:.2f}`\n🎯 啟動模式: 單點狙擊")
     else: 
-        send_telegram(f"⏳ **AI交易員 V4.1 已上線**\n📊 VIX: `{vix:.2f}`\n🔍 正在進行【短擠壓 + Minervini】雙軌掃描...")
+        send_telegram(f"⏳ **AI交易員 V4.2 已上線**\n📊 VIX: `{vix:.2f}`\n🔍 正在進行【短擠壓 + Minervini】雙軌掃描...")
         
         # 軌道 1: 短擠壓
         squeeze_tickers = run_screener(get_short_squeeze_filters())

@@ -46,24 +46,52 @@ def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
     pivot = "手動查閱"
     stop_loss = "手動查閱"
 
-    # 1. 抓取 EV (期望值)：尋找 "期望值" 或 "EV" 後面出現的數字
+    # 1. 抓取 EV (期望值)
     ev_match = re.search(r"(?:期望值|EV)[^|\n:]*[:|]?\s*([-+−‑]?\s*\d+\.?\d*)", analysis_text, re.IGNORECASE)
     if ev_match:
         ev = ev_match.group(1).replace(" ", "")
 
-    # 2. 逐行精準拆解 Entry 與 Stop-Loss
-    for line in analysis_text.split("\n"):
-        # 抓取 Entry / 買入點 (抓取該行最後一個 $ 價位，避開說明文中的 MA 或 % 干擾)
-        if pivot == "手動查閱" and re.search(r"(?:Entry|買入價|買入點|進場|試探買入)", line, re.IGNORECASE):
-            prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
-            if prices:
-                pivot = prices[-1]
+    # 2. 精準抓取 Entry / Pivot 買入價 (支援 Unicode 劃線與 Markdown 表格結構)
+    pivot_patterns = [
+        r"\|\s*(?:Entry|買入點|買入價|試探買入|進場)[^|\n]*\|[^|\n]*\|\s*\$\s*(\d+\.?\d*)", # 三欄式表格最右欄
+        r"\|\s*(?:Entry|買入點|買入價|試探買入|進場)[^|\n]*\|\s*\$\s*(\d+\.?\d*)",          # 兩欄式表格
+        r"(?:Entry|買入點|買入價|進場點)\s*[:：=]\s*\$\s*(\d+\.?\d*)"                       # 標準冒號鍵值對
+    ]
+    for pattern in pivot_patterns:
+        m = re.search(pattern, analysis_text, re.IGNORECASE)
+        if m:
+            pivot = m.group(1)
+            break
 
-        # 抓取 Stop-Loss / 止損 (抓取該行最後一個 $ 價位，完美過濾掉 ATR≈$1.2 等說明)
-        if stop_loss == "手動查閱" and re.search(r"(?:Stop-Loss|止損|Stop位|硬性止損)", line, re.IGNORECASE):
-            prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
-            if prices:
-                stop_loss = prices[-1]
+    # 備用 Pivot：逐行尋找行首為 Entry/買入 的行，取最後一個帶 $ 的數字
+    if pivot == "手動查閱":
+        for line in analysis_text.split("\n"):
+            if re.search(r"^\s*\|?\s*(?:Entry|買入價|買入點|試探買入)\b", line, re.IGNORECASE):
+                prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
+                if prices:
+                    pivot = prices[-1]
+                    break
+
+    # 3. 精準抓取 Stop-Loss 止損價 (專利正則：跳過中間說明欄，只取最右邊 $ 價格)
+    stop_patterns = [
+        r"\|\s*(?:Stop[-‑–—]?Loss|硬性止損|止損位|止損)[^|\n]*\|[^|\n]*\|\s*\$\s*(\d+\.?\d*)", # 三欄式表格最右欄
+        r"\|\s*(?:Stop[-‑–—]?Loss|硬性止損|止損位|止損)[^|\n]*\|\s*\$\s*(\d+\.?\d*)",         # 兩欄式表格
+        r"(?:Stop[-‑–—]?Loss|硬性止損|止損位|止損點)\s*[:：=]\s*\$\s*(\d+\.?\d*)"              # 標準冒號鍵值對
+    ]
+    for pattern in stop_patterns:
+        m = re.search(pattern, analysis_text, re.IGNORECASE)
+        if m:
+            stop_loss = m.group(1)
+            break
+
+    # 備用 Stop-Loss：逐行尋找行首為 Stop/止損 的行，取最後一個帶 $ 的數字
+    if stop_loss == "手動查閱":
+        for line in analysis_text.split("\n"):
+            if re.search(r"^\s*\|?\s*(?:Stop[-‑–—]?Loss|硬性止損|止損位|止損點)\b", line, re.IGNORECASE):
+                prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
+                if prices:
+                    stop_loss = prices[-1]
+                    break
 
     data = {
         "date": datetime.now().strftime("%Y-%m-%d"),
@@ -301,7 +329,7 @@ def main():
                 for t in top["ticker"]: candidates.append((t, "Minervini (Trend Template)"))
 
     if not candidates:
-        msg = "⚠️️ 今日雙策略皆無符合嚴格條件的標的，AI 提早下班。"
+        msg = "⚠️ 今日雙策略皆無符合嚴格條件的標的，AI 提早下班。"
         print(msg); send_telegram(msg); return
         
     names = ", ".join(f"{t}({s.split(' ')[0]})" for t, s in candidates)

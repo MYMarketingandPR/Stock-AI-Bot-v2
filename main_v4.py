@@ -35,8 +35,9 @@ def send_telegram(text):
         if response.status_code == 400: 
             payload["parse_mode"] = None 
             requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Telegram 推送失敗: {
+        except Exception as e:
+        print(f"Telegram 推送失敗: {e}")
+
 
 def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
     if not SHEET_WEBHOOK_URL:

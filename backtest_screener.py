@@ -3,9 +3,18 @@ import numpy as np
 import yfinance as yf
 
 # ==========================================
-# 第一步：設定你想測試嘅股票池
+# 第一步：設定你想測試嘅股票池 (57 隻熱門股)
 # ==========================================
-TICKERS = ["CRWV", "MP", "IONQ", "UUUU", "UMAC"]
+TICKERS = [
+    "MU", "LITE", "VOO", "GOOG", "SPCX", "TSLA", "AVGO", 
+    "NKE", "QQQ", "GOOGL", "NVDA", "ORCL", "SKHY", "SNDK", 
+    "COHR", "SOXL", "INTC", "ACN", "NBIS", "RKLB", "MRVL", 
+    "BE", "TQQQ", "AAOI", "TLT", "TSM", "MSFT", "MUU", 
+    "AMD", "AAPL", "META", "NFLX", "AMZN", "MSTR", "SNXX", 
+    "CRCL", "MCD", "AXTI", "CBRS", "DELL", "MRNA", "SPY", 
+    "APP", "SNPS", "BABA", "GLW", "QQQM", "SOXS", "SQQQ", 
+    "IBM", "NOK", "SOXX", "PLTR", "ON", "PDD", "TEM", "LITX"
+]
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
@@ -139,10 +148,10 @@ def run_backtest():
         print(f" {t} 觸發咗 {len(trades)} 次訊號")
         all_trades.extend(trades)
         
-    # 如果無任何交易，生成空 CSV 以防止 GitHub Action Failed
+    # 如果無任何交易，生成空 CSV 以防止 GitHub Action Failed (加入 utf-8-sig 解決 Excel 亂碼)
     if not all_trades:
         print("\n完全冇觸發任何交易訊號,可能篩選條件太嚴...")
-        pd.DataFrame(columns=["ticker", "entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "exit_reason"]).to_csv("backtest_results.csv", index=False)
+        pd.DataFrame(columns=["ticker", "entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "exit_reason"]).to_csv("backtest_results.csv", index=False, encoding='utf-8-sig')
         return
 
     result_df = pd.DataFrame(all_trades)
@@ -161,11 +170,10 @@ def run_backtest():
     print(f"平均輸單: {avg_loss:.2f}%")
     print(f"期望值(每注平均): {expectancy:.2f}%")
     print("==============================")
-    print("⚠️ 注意:交易次數太少(例如少過30-50注)嘅話,呢個勝率統計上唔夠穩定,")
-    print("建議擴大 TICKERS 清單(例如你成個34隻watchlist) 先睇整體邊個結論。\n")
     
-    result_df.to_csv("backtest_results.csv", index=False)
-    print("詳細交易紀錄已存到 backtest_results.csv")
+    # 輸出 CSV 時加入 encoding='utf-8-sig'，確保 Excel 開啟時中文字正常顯示
+    result_df.to_csv("backtest_results.csv", index=False, encoding='utf-8-sig')
+    print("詳細交易紀錄已存到 backtest_results.csv (Excel 亂碼已修復)")
 
 if __name__ == "__main__":
     run_backtest()

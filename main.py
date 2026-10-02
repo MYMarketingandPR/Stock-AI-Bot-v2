@@ -3,6 +3,7 @@ import re
 import time
 from datetime import datetime
 import requests
+import numpy as np
 import pandas as pd
 import yfinance as yf
 from groq import Groq
@@ -10,15 +11,10 @@ from groq import Groq
 from strategy_core import (
     compute_indicators,
     check_breakout_signal,
-    candidate_snapshot_dict,
-    format_quant_snapshot_text,
     MEGA_CAP_TICKERS,
     HIGH_BETA_TICKERS,
 )
 
-# ==========================================
-# 0. 股票池（已搬去strategy_core.py，同backtest_screener.py共用同一份）
-# ==========================================
 WATCHLIST = MEGA_CAP_TICKERS + HIGH_BETA_TICKERS
 
 # ==========================================
@@ -33,8 +29,7 @@ SHEET_WEBHOOK_URL = os.environ.get("SHEET_WEBHOOK_URL")
 # 2. 推送與紀錄模組
 # ==========================================
 def send_telegram(text):
-    if not BOT_TOKEN or not CHAT_ID:
-        return
+    if not BOT_TOKEN or not CHAT_ID: return
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text[:4000], "parse_mode": "Markdown"}
     try:
@@ -42,213 +37,202 @@ def send_telegram(text):
         if response.status_code == 400:
             payload["parse_mode"] = None
             requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Telegram 推送失敗: {e}")
-
+    except: pass
 
 def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
-    if not SHEET_WEBHOOK_URL:
-        return
+    if not SHEET_WEBHOOK_URL: return
     ev, pivot, stop_loss = "N/A", "手動查閱", "手動查閱"
-
     ev_match = re.search(r"(?:期望值|EV)[^|\n:]*[:|]?\s*([-+−‑]?\s*\d+\.?\d*)", analysis_text, re.IGNORECASE)
-    if ev_match:
-        ev = ev_match.group(1).replace(" ", "")
-
+    if ev_match: ev = ev_match.group(1).replace(" ", "")
     for line in analysis_text.split("\n"):
         if pivot == "手動查閱" and re.search(r"(?:Entry|買入價|買入點|試探買入|進場)", line, re.IGNORECASE):
             prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
-            if prices:
-                pivot = prices[0]
+            if prices: pivot = prices[0]
         if stop_loss == "手動查閱" and re.search(r"(?:Stop[-‑–—]?Loss|硬性止損|止損位|止損點|止損)", line, re.IGNORECASE):
             prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
-            if prices:
-                stop_loss = prices[0]
-
+            if prices: stop_loss = prices[0]
     try:
-        p_val, s_val = float(pivot), float(stop_loss)
-        if s_val >= p_val:
-            stop_loss = f"{s_val}(⚠️顛倒)"
-    except Exception:
-        pass
-
-    data = {
-        "date": datetime.now().strftime("%Y-%m-%d"), "ticker": ticker,
-        "strategy": strategy_name, "vix": f"{vix:.2f}",
-        "ev": ev, "pivot": pivot, "stop_loss": stop_loss,
-    }
-    try:
-        requests.post(SHEET_WEBHOOK_URL, json=data, timeout=10)
-    except Exception as e:
-        print(f"Google Sheets 推送失敗: {e}")
-
+        if float(stop_loss) >= float(pivot): stop_loss = f"{stop_loss}(⚠️顛倒)"
+    except: pass
+    data = {"date": datetime.now().strftime("%Y-%m-%d"), "ticker": ticker, "strategy": strategy_name, "vix": f"{vix:.2f}", "ev": ev, "pivot": pivot, "stop_loss": stop_loss}
+    try: requests.post(SHEET_WEBHOOK_URL, json=data, timeout=10)
+    except: pass
 
 # ==========================================
-# 3. 市場環境 + 批次掃描（效能/穩定性修正）
+# 3. 數據獲取與指標計算
 # ==========================================
 def get_market_context():
     try:
         vix = yf.Ticker("^VIX").history(period="1d")["Close"].iloc[-1]
         spy = yf.download("SPY", period="6mo", progress=False)
-        if isinstance(spy.columns, pd.MultiIndex):
-            spy.columns = spy.columns.get_level_values(0)
-        spy_sma50 = spy["Close"].rolling(50).mean().iloc[-1]
-        spy_bullish = spy["Close"].iloc[-1] > spy_sma50
+        if isinstance(spy.columns, pd.MultiIndex): spy.columns = spy.columns.get_level_values(0)
+        spy_bullish = spy["Close"].iloc[-1] > spy["Close"].rolling(50).mean().iloc[-1]
         return float(vix), bool(spy_bullish)
-    except Exception:
-        return 20.0, True
+    except: return 20.0, True
 
+def calculate_extra_indicators(df):
+    """計算 MACD, KDJ, 神奇九轉 (TD Sequential)"""
+    df = df.copy()
+    # MACD
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['Hist'] = df['MACD'] - df['Signal']
+    
+    # KDJ (9,3,3)
+    low_min = df['Low'].rolling(window=9).min()
+    high_max = df['High'].rolling(window=9).max()
+    df['RSV'] = 100 * ((df['Close'] - low_min) / (high_max - low_min))
+    df['K'] = df['RSV'].ewm(com=2, adjust=False).mean()
+    df['D'] = df['K'].ewm(com=2, adjust=False).mean()
+    df['J'] = 3 * df['K'] - 2 * df['D']
+    
+    # 神奇九轉 (TD Setup)
+    df['TD_Setup'] = 0
+    setup_count = 0
+    for i in range(4, len(df)):
+        if df['Close'].iloc[i] > df['Close'].iloc[i-4]:
+            setup_count += 1
+        else:
+            setup_count = 0
+        df.iloc[i, df.columns.get_loc('TD_Setup')] = setup_count if setup_count <= 9 else 9
+    return df
 
 def scan_breakout_candidates(spy_bullish):
-    """改用批次下載（yf.download接受整個list），
-    取代原本250次逐隻單獨download——大幅減少request數量，
-    亦減低好似FI/MMC/SQ呢類因為rate limit而被誤判「delisted」嘅機會。"""
     print(f"正在批次下載 {len(WATCHLIST)} 隻股票嘅歷史數據...")
+    candidates = []
     try:
         batch = yf.download(WATCHLIST, period="1y", group_by="ticker", threads=True, progress=False)
-    except Exception as e:
-        print(f"批次下載失敗: {e}")
-        return []
+    except: return candidates
 
-    candidates = []
     for t in WATCHLIST:
         try:
             if isinstance(batch.columns, pd.MultiIndex):
-                if t not in batch.columns.get_level_values(0):
-                    continue
+                if t not in batch.columns.get_level_values(0): continue
                 df = batch[t].dropna(how="all")
-            else:
-                df = batch  # 只有一隻ticker時yfinance唔會開MultiIndex，理論上WATCHLIST好多隻唔會行到呢支
-            if df.empty or len(df) < 210:
-                continue
+            else: df = batch
+            if df.empty or len(df) < 210: continue
 
             df = compute_indicators(df)
+            df = calculate_extra_indicators(df)
             row = df.iloc[-1]
+            
             if check_breakout_signal(row, spy_is_bullish=spy_bullish):
-                candidates.append(candidate_snapshot_dict(t, row))
-        except Exception:
-            continue
+                candidates.append({
+                    "ticker": t,
+                    "close": row["Close"], "sma20": row["SMA20"], "sma50": row["SMA50"], "sma200": row.get("SMA200", None),
+                    "rsi14": row["RSI14"], "ema9": row["EMA9"], "ema21": row["EMA21"], "obv": row["OBV"],
+                    "rel_vol": row["RelVol"], "pct_from_52w_high": row["PctFrom52wHigh"]*100, 
+                    "gap_up": row["GapUp"], "change_from_open_pct": row["ChangeFromOpen"]*100, "daily_ret_pct": row["DailyRet"]*100,
+                    "macd": row["MACD"], "macd_signal": row["Signal"], "macd_hist": row["Hist"],
+                    "kdj_k": row["K"], "kdj_d": row["D"], "kdj_j": row["J"], "td_setup": row["TD_Setup"]
+                })
+        except: continue
     return candidates
 
-
 def get_fundamentals(ticker):
-    """獨立處理.info呼叫 —— 同價格數據分開try/except，
-    就算.info失敗(呢個endpoint出名唔穩定)，都唔會累到連現價/技術數據都攞唔到。"""
     try:
         info = yf.Ticker(ticker).info
         sector = info.get("sector", "無法確認")
         eps_growth = info.get("earningsQuarterlyGrowth")
         eps_growth = f"{eps_growth * 100:.1f}%" if isinstance(eps_growth, (int, float)) else "資料不足"
         return sector, eps_growth
-    except Exception:
-        return "無法確認（.info抓取失敗）", "資料不足（.info抓取失敗）"
-
+    except: return "無法確認（抓取失敗）", "資料不足（抓取失敗）"
 
 def get_recent_news(ticker):
     try:
         news_list = yf.Ticker(ticker).news[:3]
-        return "\n".join([f"▪️ {n.get('title', '')}" for n in news_list]) if news_list else "近期無重大新聞。"
-    except Exception:
-        return "近期無重大新聞。"
+        return "\n".join([f"▪ {n.get('title', '')}" for n in news_list]) if news_list else "近期無重大新聞。"
+    except: return "近期無重大新聞。"
 
+def format_quant_snapshot_text(c):
+    lines = [
+        f"- 現價：${c['close']:.2f}",
+        f"- 均線：SMA20={c['sma20']:.2f} / SMA50={c['sma50']:.2f}" + (f" / SMA200={c['sma200']:.2f}" if c.get("sma200") else ""),
+        f"- 動能：EMA9={c['ema9']:.2f} / EMA21={c['ema21']:.2f}",
+        f"- 震盪指標：RSI(14)={c['rsi14']:.1f} | KDJ(K={c['kdj_k']:.1f}, D={c['kdj_d']:.1f}, J={c['kdj_j']:.1f})",
+        f"- 趨勢指標：MACD={c['macd']:.2f}, Signal={c['macd_signal']:.2f}, Hist={c['macd_hist']:.2f}",
+        f"- 神奇九轉 (TD Setup)：連續上漲 {c['td_setup']} 天",
+        f"- 量價：OBV={c['obv']:,.0f} | 相對成交量={c['rel_vol']:.2f}x",
+        f"- 形態：距52週高位={c['pct_from_52w_high']:.1f}% | 今日跳空={'有' if c['gap_up'] else '無'}",
+        f"- 日內表現：單日總漲幅={c['daily_ret_pct']:.2f}% | 開盤至今漲幅={c['change_from_open_pct']:.2f}%",
+    ]
+    return "\n".join(lines)
 
 # ==========================================
-# 4. AI 提示詞
+# 4. AI 提示詞 (終極修復版)
 # ==========================================
 def load_prompt(candidate, sector, eps_growth, news_text):
     ticker = candidate["ticker"]
     date = datetime.now().strftime("%Y-%m-%d")
-    group_name = "Mega Cap（傳統巨無霸與穩健增長）" if ticker in MEGA_CAP_TICKERS else "High Beta（高動能與投機股）"
+    group = "Mega Cap（傳統巨無霸）" if ticker in MEGA_CAP_TICKERS else "High Beta（高動能）"
     quant_text = format_quant_snapshot_text(candidate)
 
     return f"""
-角色設定：你是一位擁有 30 年華爾街對沖基金經驗的頂尖量化專家 (CIO)。
+角色設定：你是一位擁有 30 年華爾街經驗的頂尖量化專家 (CIO)。
 
 【格式鐵律】：
-1. 禁止使用Markdown表格語法（帶 |---| 嘅表格），改用清單點(-)同粗體標題(###)。
-2. 【嚴格規則】：下面【實際技術數據】已經係系統確認嘅真實數字，可以直接引用、唔使話「資料不足」。
-   但超出呢個範圍嘅資訊（例如未提供嘅深入基本面、未來催化劑細節），如果真係冇根據，
-   請老實寫「資料不足，無法判斷」，唔准為咗有個答案而自行創作或憑記憶估計一個數字——
-   呢條規則過去令我哋避免咗一次嚴重嘅幻覺事故（將一間生科公司錯誤分類做半導體股），
-   所以呢度係硬性要求，不可再被覆蓋。
+1. 禁止使用Markdown表格語法（帶 |---|），改用清單點(-)同粗體標題(###)。
+2. 【誠實原則】：量化數據已經確立，但若基本面或新聞資訊不足以支撐這筆突破，請老實註明「資料不足，風險較高」，絕不可捏造行業背景或未來催化劑。
+3. 【模型背景】：此「爆量缺口突破」策略在歷史回測中具備正期望值（Mega Cap 勝率極高約 70%，High Beta 波動較大約 50%）。請參考此背景，但必須根據下方實際數據進行獨立評估，勿盲目給出高分。
+4. 【輔助指標應用】：請觀察 MACD、KDJ 和 神奇九轉。若出現「TD Setup 達 8 或 9」或「KDJ 極度超買(>80)」等動能衰竭跡象，請在紅隊壓力測試中嚴厲警告。
 
-分析標的：{ticker}（日期：{date} ｜ 分組：{group_name}）
-【當前觸發策略】：爆量缺口突破 Volume Breakout
-【本策略已通過嘅量化篩選條件】：
-1. 短期均線多頭排列（SMA20 > SMA50，且 Close > SMA50 > SMA200）
-2. 拒絕衰竭缺口（單日漲幅 < 10%）
-3. 強勢收盤（收盤價企於全日波幅上半部）
-4. RSI(14) < 85（避免追入極端超買）
-此策略喺歷史回測中整體呈現正期望值，但個別交易嘅實際結果受市場環境影響，
-不代表呢一注一定賺錢，請基於下面呢隻股票實際嘅數據獨立判斷，唔好純粹套用歷史平均數。
+分析標的：{ticker}（日期：{date} ｜ 分組：{group}）
 
-【實際技術數據（系統已確認，可直接引用）】：
+【實際技術與量化數據】：
 {quant_text}
 
-【基本面】：
+【基本面與新聞】：
 - 所屬行業：{sector}
 - EPS 季增長：{eps_growth}
-
-【即時新聞摘要】：
 {news_text}
 
 ---
 ### 階段一：終極決策前置
 - 【指令】：(強烈買入 / 輕倉試探 / 防守觀望)
-- 【主觀勝率】：基於上面實際數據嘅獨立判斷（唔係固定套用某個歷史平均數）
+- 【主觀勝率】：基於實際數據與行業板塊動能獨立判斷（若欠缺資訊或出現衰竭訊號，請如實降低評分）
 - 【期望值(EV)】：+/- X.XX%
-- 【核心邏輯】：精煉解釋決策原因，並註明是基於哪一項實際數據或新聞。
+- 【核心邏輯】：精煉解釋決策原因，基於哪一項數據？
 
 ### 階段二：族群與基本面催化劑
-- 簡述呢間公司目前嘅營運或題材亮點，是否有足夠動力支撐呢波突破？如果新聞冇提供相關資訊，請老實講。
+- 簡述目前營運亮點，是否有足夠動力支撐這波突破？(若資訊不足請直接回答「資料不足」)
 
 ### 階段三：量化風控參數
-- Entry（建議買入價）：$XX.XX
-- Stop-Loss（硬性止損）：$XX.XX（定在買入價 -7% 處）
-- Target T1（波段止盈）：$XX.XX（定在買入價 +10% 處）
-- 資金保護策略：持倉期限最長 20 日；若獲利達 +5%，止損上移至買入價打和點。
+- Entry（買入價）：$XX.XX
+- Stop-Loss（止損）：$XX.XX（嚴格定於買入價 -7%）
+- Target T1（止盈）：$XX.XX（嚴格定於買入價 +10%）
+- 資金保護策略：持倉最長 20 日；獲利達 +5% 則保本平保。
 
 ### 階段四：紅隊壓力測試
-- 致命陷阱：儘管技術面符合條件，呢筆突破最大嘅潛在風險或基本面盲區係咩？
+- 致命陷阱：這筆突破最大的潛在風險、超買跡象 (如 神奇九轉或 KDJ 鈍化) 或基本面盲區是什麼？
 """
-
 
 # ==========================================
 # 5. 主程式執行
 # ==========================================
 def main():
     print("啟動 AI 量化交易員...")
-    if not GROQ_API_KEY:
-        print("❌ 找不到 GROQ_API_KEY")
-        return
-
+    if not GROQ_API_KEY: return
     vix, spy_bullish = get_market_context()
-
     if not spy_bullish:
         msg = "⚠️ **大盤濾網啟動**\n標普500跌破50日均線，目前禁止做多，AI 提早下班。"
-        print(msg)
-        send_telegram(msg)
-        return
+        send_telegram(msg); return
 
-    send_telegram(f"⏳ **AI交易員已上線**\n📊 VIX: `{vix:.2f}`\n大盤趨勢: `多頭`\n正在批次掃描 {len(WATCHLIST)} 隻股票...")
-
+    send_telegram(f"⏳ **AI交易員已上線**\n📊 VIX: `{vix:.2f}`\n正在批次掃描 {len(WATCHLIST)} 隻股票...")
     candidates = scan_breakout_candidates(spy_bullish)
 
     if not candidates:
-        msg = f"⚠️ 今日 {len(WATCHLIST)} 隻核心股皆無觸發高品質爆量突破，守住資金，AI 提早下班。"
-        print(msg)
-        send_telegram(msg)
-        return
+        msg = f"⚠️ 今日 {len(WATCHLIST)} 隻核心股皆無觸發爆量突破，守住資金，提早下班。"
+        send_telegram(msg); return
 
     names = ", ".join(c["ticker"] for c in candidates)
     send_telegram(f"🎯 **今日精準突破名單: {names}**\n正在呼叫 AI 大腦診斷...")
-
     client = Groq(api_key=GROQ_API_KEY)
 
     for c in candidates:
         t = c["ticker"]
         try:
-            print(f"正在分析 {t} ...")
             sector, eps_growth = get_fundamentals(t)
             news_data = get_recent_news(t)
             prompt = load_prompt(c, sector, eps_growth, news_data)
@@ -259,14 +243,11 @@ def main():
                 temperature=0.2,
             )
             analysis = response.choices[0].message.content
-
             group = "Mega Cap" if t in MEGA_CAP_TICKERS else "High Beta"
-            send_telegram(f"🔥 **【{t}｜{group}｜爆量突破】機密備忘錄** 🔥\n\n{analysis[:3800]}")
+            send_telegram(f"🔥 **【{t}｜{group}】機密備忘錄** 🔥\n\n{analysis[:3800]}")
             log_to_google_sheet(t, "Volume Breakout", vix, analysis)
             time.sleep(5)
-        except Exception as e:
-            print(f"❌ 分析 {t} 失敗: {e}")
-
+        except Exception as e: print(f"❌ 分析 {t} 失敗: {e}")
 
 if __name__ == "__main__":
     main()

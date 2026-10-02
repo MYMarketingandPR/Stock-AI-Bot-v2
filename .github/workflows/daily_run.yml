@@ -1,9 +1,8 @@
-name: Daily Stock AI Agent V4 (Dual Track)
-
+name: Daily Stock AI Agent 
 on:
   schedule:
-    # 每天一到五執行。設定為 UTC 20:05 (即英國夏令時間夜晚 9:05)
-    - cron: '5 20 * * 1-5'
+    # 每天一到五執行。設定為 UTC 20:25 (即英國夏令時間夜晚 9:25)
+    - cron: '25 20 * * 1-5'
   
   # 允許手動點擊按鈕執行
   workflow_dispatch:

@@ -19,7 +19,8 @@ jobs:
         run: pip install yfinance pandas numpy
 
       - name: 跑回測
-        run: python backtest_screener.py
+        # 這裡加上了 -u，讓回測進度可以即時顯示
+        run: python -u backtest_screener.py
 
       - name: 上傳回測結果CSV
         uses: actions/upload-artifact@v4

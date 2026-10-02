@@ -247,7 +247,7 @@ def run_backtest():
 
     summary_df = pd.DataFrame(summary_data)
     final_df = pd.concat([summary_df, result_df], ignore_index=True)
-    file_name = f"backtest_results_{TEST_GROUP}.csv"
+    file_name = "backtest_results.csv" # 寫死用返舊名，Action 就會搵得到
     final_df.to_csv(file_name, index=False, encoding="utf-8-sig")
     print(f"詳細交易紀錄已存到 {file_name}")
 

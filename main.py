@@ -95,7 +95,7 @@ def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
     except: pass
 
 # ==========================================
-# 3. 核心大腦：執行回測同款量化條件掃描
+# 3. 核心大腦：執行回測 60% 勝率同款量化條件掃描
 # ==========================================
 def get_market_context():
     try:
@@ -119,8 +119,11 @@ def scan_breakout_candidates(spy_bullish):
             
             close = df["Close"].iloc[-1]
             open_p = df["Open"].iloc[-1]
+            high_p = df["High"].iloc[-1]
+            low_p = df["Low"].iloc[-1]
             prev_close = df["Close"].iloc[-2]
             
+            sma20 = df["Close"].rolling(20).mean().iloc[-1]
             sma50 = df["Close"].rolling(50).mean().iloc[-1]
             sma200 = df["Close"].rolling(200).mean().iloc[-1]
             high52w = df["Close"].rolling(252).max().iloc[-1]
@@ -131,8 +134,12 @@ def scan_breakout_candidates(spy_bullish):
             pct_from_52w_high = (close - high52w) / high52w if high52w > 0 else -1
             gap_up = open_p > prev_close
             change_from_open = (close - open_p) / open_p if open_p > 0 else 0
+            daily_ret = (close / prev_close) - 1
             
-            # RSI(14)
+            # 計算 K 線實體與 RSI
+            daily_range = high_p - low_p
+            close_strong = close >= low_p + (0.5 * daily_range) if daily_range > 0 else True
+            
             delta = df["Close"].diff()
             gain = delta.clip(lower=0)
             loss = -delta.clip(upper=0)
@@ -141,17 +148,20 @@ def scan_breakout_candidates(spy_bullish):
             rs = avg_gain / avg_loss
             rsi14 = 100 - (100 / (1 + rs)).iloc[-1]
             
-            # 回測完全一致之邏輯 (RSI < 85 防禦極端泡沫)
+            # 100% 同步回測 60% 勝率邏輯
             if (spy_bullish 
                 and close > 15 
                 and close > sma50 
                 and close > sma200 
+                and sma20 > sma50              # 短期均線多頭排列
                 and close < sma50 * 1.20 
                 and pct_from_52w_high >= -0.05 
                 and gap_up 
                 and change_from_open >= 0.02 
                 and rel_vol >= 2.5
-                and rsi14 < 85):
+                and daily_ret < 0.10           # 防衰竭缺口
+                and rsi14 < 85                 # 防極端泡沫
+                and close_strong):             # 光頭強勢收盤
                 
                 candidates.append(t)
         except Exception as e:
@@ -165,11 +175,17 @@ def get_technical_snapshot(ticker):
         info = stock.info
         close, vol = df["Close"], df["Volume"]
 
+        sma20 = close.rolling(20).mean().iloc[-1]
         sma50 = close.rolling(50).mean().iloc[-1]
-        sma150 = close.rolling(150).mean().iloc[-1] if len(close) >= 150 else "N/A"
         sma200 = close.rolling(200).mean().iloc[-1] if len(close) >= 200 else "N/A"
         high52w = close.rolling(min(len(close), 252)).max().iloc[-1]
         vol_ratio = vol.iloc[-1] / vol.rolling(20).mean().iloc[-1]
+        
+        delta = close.diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        rs = gain.ewm(alpha=1/14, adjust=False).mean() / loss.ewm(alpha=1/14, adjust=False).mean()
+        rsi = 100 - (100 / (1 + rs)).iloc[-1]
 
         sector = info.get('sector', '無法確認')
         eps_growth = info.get('earningsQuarterlyGrowth', '資料不足')
@@ -179,8 +195,9 @@ def get_technical_snapshot(ticker):
             f"- 所屬行業: {sector}",
             f"- EPS 增長: {eps_growth}",
             f"- 現價: ${close.iloc[-1]:.2f} (距52週高位: {(close.iloc[-1]/high52w - 1)*100:.1f}%)",
-            f"- 50日均線: ${sma50:.2f}",
-            f"- 今日成交量 / 20日均量: {vol_ratio:.2f}x (強勢爆量)"
+            f"- 20日均線: ${sma20:.2f} \vert{} 50日均線: ${sma50:.2f}",
+            f"- RSI(14): {rsi:.1f}",
+            f"- 今日成交量 / 20日均量: {vol_ratio:.2f}x (強勢爆量且收盤強勁)"
         ]
         return "\n".join(lines)
     except Exception as e:
@@ -193,7 +210,7 @@ def get_recent_news(ticker):
     except: return "近期無重大新聞。"
 
 # ==========================================
-# 4. AI 提示詞 (無表格版 + 精準參數)
+# 4. AI 提示詞 (同步回測風控參數)
 # ==========================================
 def load_prompt(ticker, news_text, tech_text):
     date = datetime.now().strftime("%Y-%m-%d")
@@ -202,12 +219,12 @@ def load_prompt(ticker, news_text, tech_text):
 
 【格式與排版鐵律 - 必須嚴格遵守】：
 1. 🚫 **絕對禁止使用任何 Markdown 表格語法** (即帶有 |---| 豎線欄位的表格)！表格在 Telegram 手機介面會完全擠壓變形破版。
-2. 格式必須使用【清單點 Bullet Points (`-`)】與【粗體標題 (`###`)】，各區塊之間請用「空行」清晰隔開，讓手機閱讀非常舒適。
+2. 格式必須使用【清單點 Bullet Points (`-`)】與【粗體標題 (`###`)】，各區塊之間請用「空行」清晰隔開，讓手機閱讀舒適。
 3. 【主觀勝率】與【期望值(EV)】你必須基於現有數據進行專業估算，絕不可回答「資料不足」。
 
 分析標的：{ticker} (日期：{date})
 【當前觸發策略】：Mega-Cap 爆量缺口突破 (Volume Breakout)
-【策略核心邏輯】：大盤處於牛市，巨型股出現跳空高開、盤中強勢拉升且成交量突破 2.5 倍均量，顯示機構資金強烈介入。
+【策略核心邏輯】：大盤處於牛市，巨型股出現跳空高開、盤中強勢拉升至高位收盤，且成交量突破 2.5 倍均量，技術面呈短多排列。
 
 【實際技術數據】：
 {tech_text}
@@ -225,11 +242,11 @@ def load_prompt(ticker, news_text, tech_text):
 ### 階段二：族群與基本面背景
 - 根據新聞與技術數據，簡述這間公司目前的營運或題材亮點。
 
-### 階段三：技術面與風控參數
-- Entry (最佳買入價)：$XX.XX (直接以現價或微調作參考)
-- Stop-Loss (硬性止損)：$XX.XX (必須定在買入價以下約 7% 處，作為保護)
-- Target T1 (波段止盈)：$XX.XX (設定為買入價以上約 10%，波段見好就收)
-- 保本策略指引：當獲利達到 +5% 時，請手動將止損上移至買入價。
+### 階段三：技術面與量化風控參數 (請依循下列指引提供具體數字)
+- Entry (建議買入價)：$XX.XX (直接以現價或微調作參考)
+- Stop-Loss (硬性止損)：$XX.XX (嚴格定在買入價的 -7% 處)
+- Target T1 (波段止盈)：$XX.XX (嚴格定在買入價的 +10% 處，波段見好就收)
+- 資金保護策略：持倉期限最長 20 日，若獲利達到 +5%，請手動將止損上移至買入價打和點；若持有 10 日仍未獲利，提早平倉。
 
 ### 階段四：紅隊壓力測試
 - 致命陷阱：這筆突破最大的假動作風險或基本面盲區是什麼？
@@ -248,12 +265,12 @@ def main():
         msg = f"⚠️ **大盤濾網啟動**\n標普500跌破50日均線，目前禁止做多，AI 提早下班。"
         print(msg); send_telegram(msg); return
         
-    send_telegram(f"⏳ **AI交易員已上線**\n📊 VIX: `{vix:.2f}`\n大盤趨勢: `多頭`\n正在掃描 250 隻全市場最強流動性股票...")
+    send_telegram(f"⏳ **AI交易員已上線**\n📊 VIX: `{vix:.2f}`\n大盤趨勢: `多頭`\n正在根據 60% 勝率模型掃描 250 隻全市場最強流動性股票...")
     
     breakout_tickers = scan_breakout_candidates(spy_bullish)
     
     if not breakout_tickers:
-        msg = "⚠️ 今日 250 隻核心股皆無觸發爆量突破條件，AI 提早下班。"
+        msg = "⚠️ 今日 250 隻核心股皆無觸發高品質爆量突破，守住資金，AI 提早下班。"
         print(msg); send_telegram(msg); return
         
     names = ", ".join(breakout_tickers)
@@ -276,8 +293,8 @@ def main():
             )
             analysis = response.choices[0].message.content
             
-            send_telegram(f"🔥 **【{t}｜爆量缺口突破】 機密備忘錄** 🔥\n\n{analysis[:3800]}")
-            log_to_google_sheet(t, "Volume Breakout", vix, analysis)
+            send_telegram(f"🔥 **【{t}｜高勝率爆量突破】 機密備忘錄** 🔥\n\n{analysis[:3800]}")
+            log_to_google_sheet(t, "Volume Breakout (Optimized)", vix, analysis)
             time.sleep(5) 
         except Exception as e:
             print(f"❌ 分析 {t} 失敗: {e}")

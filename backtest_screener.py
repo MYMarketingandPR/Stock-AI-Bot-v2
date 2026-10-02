@@ -84,7 +84,7 @@ def check_breakout_signal(row, spy_is_bullish):
             and bool(row["GapUp"])
             and row["ChangeFromOpen"] >= 0.02
             and row["RelVol"] >= 2.5 
-            and row["RSI14"] < 75 # 防接火棒：禁止極度超買時追入
+            and row["RSI14"] < 85 # 💡 修改：放寬至 85，容許強勢超買，只防禦極端泡沫
         )
     except Exception:
         return False
@@ -139,10 +139,11 @@ def simulate_trades(df, ticker, spy_filter):
                     break
                 
                 # 3. 時間止損 (Time Stop) 微調
-                days_held = j - i # 計算持倉日數 (j=i+1為第一天)
-                if days_held == 10 and day_close < breakeven_trigger:
+                days_held = j - i 
+                # 💡 修改：持有 10 日後，只有當帳面為「負數(虧損)」時才提早釋放資金
+                if days_held == 10 and day_close < entry_price:
                     exit_price = day_close
-                    exit_date, exit_reason = df.index[j], "時間止損(10日未達+5%)"
+                    exit_date, exit_reason = df.index[j], "時間止損(10日未能獲利)"
                     break
                     
             if exit_price is None:

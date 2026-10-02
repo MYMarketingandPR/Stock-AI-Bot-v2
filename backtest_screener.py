@@ -3,38 +3,45 @@ import numpy as np
 import yfinance as yf
 
 # ==========================================
-# 第一步：設定你想測試嘅股票池 (250 隻頂級熱門股 - 已剔除失效Ticker並替換新血)
+# 第一步：選擇你想測試嘅股票池群組 ("MEGA_CAP" 或者是 "HIGH_BETA")
 # ==========================================
-TICKERS = [
-    "AAPL", "ABBV", "ACN", "ADBE", "ADI", "ADP", "AEM", "AEP", "AFL", "AFRM", 
-    "AIG", "ALL", "AMAT", "AMD", "AME", "AMGN", "AMZN", "AON", "APD", "APP", 
-    "ARKK", "ARM", "ASML", "AVGO", "AXP", "AZN", "AZO", "BA", "BABA", "BAC", 
-    "BIDU", "BIIB", "BKNG", "BLK", "BMO", "BNS", "BRK-B", "BSX", "C", "CAT", 
-    "CB", "CCI", "CDNS", "CI", "CMCSA", "CME", "CNQ", "COF", "COIN", "COP", 
-    "COST", "CPRT", "CRM", "CRWD", "CSCO", "CSX", "CTAS", "CTVA", "CVX", "D", 
-    "DASH", "DDOG", "DE", "DHI", "DHR", "DIA", "DIS", "DKNG", "DUK", "ED", 
-    "EEM", "EL", "ELV", "EMR", "ENB", "ENPH", "EOG", "ETN", "EW", "EXC", 
-    "EXR", "F", "FAST", "FCX", "FDX", "FICO", "FSLR", "FTNT", "GD", "GDX", 
-    "GE", "GILD", "GLD", "GOLD", "GOOG", "GOOGL", "GPN", "GS", "GWW", "HAL", 
-    "HCA", "HD", "HLT", "HON", "HOOD", "HUM", "IBM", "ICE", "IDXX", "INTC", 
-    "INTU", "IQV", "ITW", "IWM", "JD", "JNJ", "JPM", "KDP", "KHC", "KLAC", 
-    "KMB", "KMI", "KO", "KRE", "LCID", "LI", "LIN", "LLY", "LMT", "MA", 
-    "MAR", "MCD", "MCHP", "MCK", "MCO", "MDB", "MDLZ", "MDT", "MELI", "MET", 
-    "META", "MNDY", "MNST", "MO", "MPC", "MRK", "MS", "MSFT", "MSI", "MSTR", 
-    "MTD", "MU", "NEE", "NEM", "NET", "NFLX", "NIO", "NKE", "NOC", "NOW", 
-    "NSC", "NVDA", "NVO", "NVS", "NXPI", "O", "ODFL", "ORLY", "OXY", "PANW", 
-    "PAYX", "PCAR", "PDD", "PEG", "PEP", "PFE", "PG", "PGR", "PH", "PLTR", 
-    "PLUG", "PM", "PNC", "PRU", "PSX", "PYPL", "QCOM", "QQQ", "RBLX", "REGN", 
-    "RIVN", "ROKU", "ROP", "ROST", "RSG", "RTX", "RUN", "RY", "SAP", "SE", 
-    "SEDG", "SHEL", "SHOP", "SHW", "SLB", "SLV", "SMCI", "SMH", "SNOW", "SNPS", 
-    "SO", "SONY", "SOXL", "SOXS", "SOXX", "SPCE", "SPGI", "SPOT", "SPY", "SQQQ", 
-    "SRE", "STZ", "SU", "SYK", "SYY", "T", "TD", "TEAM", "TEL", "TGT", 
-    "TJX", "TLT", "TM", "TMO", "TOST", "TQQQ", "TRGP", "TRI", "TRP", "TRV", 
-    "TSLA", "TSM", "TT", "TTD", "TTE", "TXN", "U", "UBER", "UNG", "UNH"
+TEST_GROUP = "HIGH_BETA"  # 💡 更改此處：跑完一次後，將呢度改成 "MEGA_CAP" 再跑第二次
+
+MEGA_CAP_TICKERS = [
+    "AAPL", "ABBV", "ACN", "ADBE", "ADI", "ADP", "AEM", "AEP", "AFL", "AIG", 
+    "ALL", "AMAT", "AMD", "AME", "AMGN", "AMZN", "AON", "APD", "ASML", "AVGO", 
+    "AXP", "AZN", "AZO", "BA", "BAC", "BIIB", "BKNG", "BLK", "BMO", "BNS", 
+    "BRK-B", "BSX", "C", "CAT", "CB", "CCI", "CDNS", "CI", "CMCSA", "CME", 
+    "CNQ", "COF", "COP", "COST", "CPRT", "CRM", "CSCO", "CSX", "CTAS", "CTVA", 
+    "CVX", "D", "DE", "DHI", "DHR", "DIA", "DIS", "DUK", "ED", "EL", 
+    "ELV", "EMR", "ENB", "EOG", "ETN", "EW", "EXC", "EXR", "F", "FAST", 
+    "FCX", "FDX", "FICO", "FTNT", "GD", "GDX", "GE", "GILD", "GLD", "GOLD", 
+    "GOOG", "GOOGL", "GPN", "GS", "GWW", "HAL", "HCA", "HD", "HLT", "HON", 
+    "HUM", "IBM", "ICE", "IDXX", "INTC", "INTU", "IQV", "ITW", "IWM", "JNJ", 
+    "JPM", "KDP", "KHC", "KLAC", "KMB", "KMI", "KO", "LIN", "LLY", "LMT", 
+    "MA", "MAR", "MCD", "MCHP", "MCK", "MCO", "MDLZ", "MDT", "MET", "META", 
+    "MNST", "MO", "MPC", "MRK", "MS", "MSFT", "MSI", "MTD", "MU", "NEE", 
+    "NEM", "NFLX", "NKE", "NOC", "NOW", "NSC", "NVDA", "NVO", "NVS", "NXPI", 
+    "O", "ODFL", "ORLY", "OXY", "PANW", "PAYX", "PCAR", "PEG", "PEP", "PFE", 
+    "PG", "PGR", "PH", "PM", "PNC", "PRU", "PSX", "PYPL", "QCOM", "REGN", 
+    "ROP", "ROST", "RSG", "RTX", "RY", "SAP", "SHEL", "SHW", "SLB", "SLV", 
+    "SMH", "SNPS", "SO", "SONY", "SPGI", "SPY", "SRE", "STZ", "SU", "SYK", 
+    "SYY", "T", "TD", "TEL", "TGT", "TJX", "TM", "TMO", "TRGP", "TRI", 
+    "TRP", "TRV", "TSLA", "TSM", "TT", "TTE", "TXN", "UBER", "UNH"
 ]
 
-# 💡 Out-of-Sample 驗證設定：你可以隨意改動呢度去切開時間段測試
-START_DATE = "2021-01-01"
+HIGH_BETA_TICKERS = [
+    "AFRM", "APP", "ARKK", "ARM", "BABA", "BIDU", "COIN", "CRWD", "DASH", "DDOG", 
+    "DKNG", "EEM", "ENPH", "FSLR", "HOOD", "JD", "KRE", "LCID", "LI", "MDB", 
+    "MELI", "MNDY", "MSTR", "NET", "NIO", "PDD", "PLTR", "PLUG", "QQQ", "RBLX", 
+    "RIVN", "ROKU", "RUN", "SE", "SEDG", "SHOP", "SMCI", "SNOW", "SOXL", "SOXS", 
+    "SOXX", "SPCE", "SPOT", "SQQQ", "TEAM", "TLT", "TOST", "TQQQ", "TTD", "U", 
+    "UNG"
+]
+
+TICKERS = MEGA_CAP_TICKERS if TEST_GROUP == "MEGA_CAP" else HIGH_BETA_TICKERS
+
+START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
 # 進場/出場/風控規則
@@ -133,7 +140,6 @@ def simulate_trades(df, ticker, spy_filter):
                 day_high = df["High"].iloc[j]
                 day_low = df["Low"].iloc[j]
 
-                # 💡 完美修復嘅保本與止損分離判斷
                 stop_hit = day_low <= current_stop_price
                 target_hit = day_high >= target_price
 
@@ -151,7 +157,6 @@ def simulate_trades(df, ticker, spy_filter):
                     exit_date, exit_reason = df.index[j], "觸發止盈"
                     break
 
-                # 每日收市後先決定聽日條保本線洗唔洗上移
                 if day_high >= breakeven_trigger and current_stop_price < entry_price:
                     current_stop_price = entry_price
 
@@ -186,7 +191,7 @@ def run_backtest():
         print("⚠️ 警告：SPY濾網未能建立")
 
     all_trades = []
-    print(f"準備掃描 {len(TICKERS)} 隻美股...")
+    print(f"準備掃描 {TEST_GROUP} 組別的 {len(TICKERS)} 隻美股...")
     for t in TICKERS:
         print(f"處理緊 {t}...")
         df = prepare_data(t)
@@ -198,9 +203,9 @@ def run_backtest():
         all_trades.extend(trades)
 
     if not all_trades:
-        print("\n完全冇觸發任何交易訊號...")
+        print(f"\n{TEST_GROUP} 完全冇觸發任何交易訊號...")
         pd.DataFrame(columns=["ticker", "entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "exit_reason"]).to_csv(
-            "backtest_results.csv", index=False, encoding="utf-8-sig"
+            f"backtest_results_{TEST_GROUP}.csv", index=False, encoding="utf-8-sig"
         )
         return
 
@@ -226,7 +231,7 @@ def run_backtest():
     ]
 
     summary_data = [
-        {"ticker": "--- 回測表現總結 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
+        {"ticker": f"--- {TEST_GROUP} 回測表現總結 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         {"ticker": f"總交易次數：{total_trades} 次", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
@@ -242,8 +247,9 @@ def run_backtest():
 
     summary_df = pd.DataFrame(summary_data)
     final_df = pd.concat([summary_df, result_df], ignore_index=True)
-    final_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
-    print("詳細交易紀錄已存到 backtest_results.csv")
+    file_name = f"backtest_results_{TEST_GROUP}.csv"
+    final_df.to_csv(file_name, index=False, encoding="utf-8-sig")
+    print(f"詳細交易紀錄已存到 {file_name}")
 
 if __name__ == "__main__":
     run_backtest()

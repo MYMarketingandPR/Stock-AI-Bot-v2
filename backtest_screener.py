@@ -65,17 +65,9 @@ def prepare_data(ticker):
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
         
+    df["SMA20"] = df["Close"].rolling(20).mean()   # 💡 新增 20日均線
     df["SMA50"] = df["Close"].rolling(50).mean()
     df["SMA200"] = df["Close"].rolling(200).mean()
-    
-    # RSI(14)
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1/14, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1/14, adjust=False).mean()
-    rs = avg_gain / avg_loss
-    df["RSI14"] = 100 - (100 / (1 + rs))
     
     df["VolAvg20"] = df["Volume"].rolling(20).mean()
     df["RelVol"] = df["Volume"] / df["VolAvg20"]
@@ -84,33 +76,33 @@ def prepare_data(ticker):
     df["PctFrom52wHigh"] = (df["Close"] - df["High52w"]) / df["High52w"]
     df["ChangeFromOpen"] = (df["Close"] - df["Open"]) / df["Open"]
     
+    # 計算當日升幅 (防衰竭缺口)
+    df["DailyRet"] = df["Close"] / df["Close"].shift(1) - 1
+    
     return df
 
 # ==========================================
-# 第四步：設定爆量突破策略條件
+# 第四步：設定爆量突破策略條件 (終極勝率版)
 # ==========================================
 def check_breakout_signal(row, spy_is_bullish):
     try:
-        # 新增計算：當日收市價是否強勢站穩在全日波幅的頂部 (防長上影線/避雷針)
+        # 💡 手術刀 1：計算K線實體，收盤價必須在全日波幅的「上半部」 (>50%)
         daily_range = row["High"] - row["Low"]
-        close_strong = False
-        if daily_range > 0:
-            # 收市價必須位於當日最高點的 30% 範圍內 (強勢收盤)
-            close_strong = row["Close"] >= row["Low"] + (0.7 * daily_range)
-
+        close_strong = row["Close"] >= row["Low"] + (0.5 * daily_range) if daily_range > 0 else True
+        
         return (
             spy_is_bullish
             and row["Close"] > 15
             and row["Close"] > row["SMA50"]
             and row["Close"] > row["SMA200"]
-            and row["SMA50"] > row["SMA200"] # 💡 新增 1：嚴格多頭排列 (50MA 必須大於 200MA)，過濾死貓彈
+            and row["SMA20"] > row["SMA50"]        # 💡 手術刀 2：短期均線多頭排列，確保趨勢向上
             and row["Close"] < row["SMA50"] * 1.20 
-            and row["PctFrom52wHigh"] >= -0.10 # 💡 優化：放寬至距離 52 週高位 10% 內，捕捉剛起步的突破
+            and row["PctFrom52wHigh"] >= -0.05
             and bool(row["GapUp"])
             and row["ChangeFromOpen"] >= 0.02
-            and row["RelVol"] >= 3.0         # 💡 新增 2：既然股票池大了，爆量要求提升至 3 倍，只做極端異動
-            and row["RSI14"] < 85
-            and close_strong                 # 💡 新增 3：K線實體濾網，保證買盤強勢到尾市，過濾假突破
+            and row["RelVol"] >= 2.5 
+            and row["DailyRet"] < 0.10             # 💡 手術刀 3：防衰竭缺口，單日升幅不得大於 10%
+            and close_strong                       # 💡 確保沒有長上影線的假突破
         )
     except Exception:
         return False
@@ -140,13 +132,11 @@ def simulate_trades(df, ticker, spy_filter):
                 day_open = df["Open"].iloc[j]
                 day_high = df["High"].iloc[j]
                 day_low = df["Low"].iloc[j]
-                day_close = df["Close"].iloc[j]
                 
-                # 1. 保本機制
+                # 保本機制
                 if day_high >= breakeven_trigger and current_stop_price < entry_price:
                     current_stop_price = entry_price
                 
-                # 2. 止損與止盈檢測
                 stop_hit = day_low <= current_stop_price
                 target_hit = day_high >= target_price
                 
@@ -162,13 +152,6 @@ def simulate_trades(df, ticker, spy_filter):
                 elif target_hit:
                     exit_price = target_price
                     exit_date, exit_reason = df.index[j], "觸發止盈"
-                    break
-                
-                # 3. 時間止損微調：持有 10 日後，只有當帳面為「負數(虧損)」時才提早釋放資金
-                days_held = j - i 
-                if days_held == 10 and day_close < entry_price:
-                    exit_price = day_close
-                    exit_date, exit_reason = df.index[j], "時間止損(10日未能獲利)"
                     break
                     
             if exit_price is None:

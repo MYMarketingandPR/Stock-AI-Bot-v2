@@ -18,11 +18,11 @@ TICKERS = [
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
-# 進場/出場/風控規則 (巨無霸科技股優化版)
-HOLD_DAYS = 20         # 俾足 20 日發酵
-STOP_LOSS_PCT = -0.07  # 止損維持 -7%
-TARGET_PCT = 0.10      # 止盈降至 +10% (提高中標率)
-BREAKEVEN_PCT = 0.05   # 升達 +5% 立即啟動保本，杜絕由贏變輸
+# 進場/出場/風控規則 
+HOLD_DAYS = 20         
+STOP_LOSS_PCT = -0.07  
+TARGET_PCT = 0.10      
+BREAKEVEN_PCT = 0.05   
 
 # ==========================================
 # 第二步：下載大盤數據 (SPY) 作為環境濾網
@@ -70,26 +70,26 @@ def prepare_data(ticker):
     return df
 
 # ==========================================
-# 第四步：設定爆量突破策略條件 (微調防追高與爆量要求)
+# 第四步：設定爆量突破策略條件
 # ==========================================
 def check_breakout_signal(row, spy_is_bullish):
     try:
         return (
-            spy_is_bullish # 大盤濾網：SPY 必須在 50MA 之上
+            spy_is_bullish
             and row["Close"] > 15
             and row["Close"] > row["SMA50"]
             and row["Close"] > row["SMA200"]
-            and row["Close"] < row["SMA50"] * 1.20 # 防追高放寬至20%，包容更多強勢股
+            and row["Close"] < row["SMA50"] * 1.20 
             and row["PctFrom52wHigh"] >= -0.05
             and bool(row["GapUp"])
             and row["ChangeFromOpen"] >= 0.02
-            and row["RelVol"] >= 2.5 # 爆量門檻降回 2.5 倍，增加交易機會
+            and row["RelVol"] >= 2.5 
         )
     except Exception:
         return False
 
 # ==========================================
-# 第五步：逐日行走，模擬交易 (保本機制)
+# 第五步：逐日行走，模擬交易
 # ==========================================
 def simulate_trades(df, ticker, spy_filter):
     trades = []
@@ -114,7 +114,7 @@ def simulate_trades(df, ticker, spy_filter):
                 day_high = df["High"].iloc[j]
                 day_low = df["Low"].iloc[j]
                 
-                # 保本機制：如果盤中最高價觸及 +5%，止損上移至買入價
+                # 保本機制
                 if day_high >= breakeven_trigger and current_stop_price < entry_price:
                     current_stop_price = entry_price
                 
@@ -175,40 +175,46 @@ def run_backtest():
         all_trades.extend(trades)
         
     if not all_trades:
-        print("\n完全冇觸發任何交易訊號,可能篩選條件太嚴...")
+        print("\n完全冇觸發任何交易訊號...")
         pd.DataFrame(columns=["ticker", "entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "exit_reason"]).to_csv("backtest_results.csv", index=False, encoding='utf-8-sig')
         return
 
     result_df = pd.DataFrame(all_trades)
+    
+    # 計算各項數據
+    total_trades = len(result_df)
     win_trades = result_df[result_df["return_pct"] > 0]
-    lose_trades = result_df[result_df["return_pct"] < 0] 
+    lose_trades = result_df[result_df["return_pct"] < 0]
+    be_trades = result_df[result_df["return_pct"] == 0]
     
-    win_rate = len(win_trades) / len(result_df) * 100
-    avg_win = win_trades["return_pct"].mean() if len(win_trades) else 0
-    avg_loss = lose_trades["return_pct"].mean() if len(lose_trades) else 0
-    expectancy = (win_rate / 100 * avg_win) + ((len(lose_trades) / len(result_df)) * avg_loss)
+    wins = len(win_trades)
+    losses = len(lose_trades)
+    bes = len(be_trades)
+    
+    strict_win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
+    adj_win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
+    
+    avg_win = win_trades["return_pct"].mean() if wins > 0 else 0
+    avg_loss = lose_trades["return_pct"].mean() if losses > 0 else 0
 
-    print("\n========== 回測結果 ==========")
-    print(f"總交易次數: {len(result_df)}")
-    print(f"勝率: {win_rate:.1f}%")
-    print(f"平均贏單: +{avg_win:.2f}%")
-    print(f"平均輸單: {avg_loss:.2f}%")
-    print(f"期望值(每注平均): {expectancy:.2f}%")
-    print("==============================")
-    
+    # 建立總結表格內容
     summary_data = [
-        {"ticker": f"--- 回測總結 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": f"總交易次數: {len(result_df)}", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": f"勝率: {win_rate:.1f}%", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": f"期望值: {expectancy:.2f}%", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": f"--- 詳細交易紀錄 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""}
+        {"ticker": "--- 回測表現總結 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
+        {"ticker": f"總交易次數：{total_trades} 次", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
+        {"ticker": f"勝負分佈：贏 {wins} 次、輸 {losses} 次、打和(保本) {bes} 次", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
+        {"ticker": f"嚴格勝率：{strict_win_rate:.2f}% (若撇除保本，真實勝率約為 {adj_win_rate:.2f}%)", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
+        {"ticker": f"平均贏單利潤：+{avg_win:.2f}%", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
+        {"ticker": f"平均輸單虧損：{avg_loss:.2f}%", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
+        {"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
+        {"ticker": "--- 詳細交易紀錄 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""}
     ]
     
     summary_df = pd.DataFrame(summary_data)
     final_df = pd.concat([summary_df, result_df], ignore_index=True)
     
+    # 輸出 CSV
     final_df.to_csv("backtest_results.csv", index=False, encoding='utf-8-sig')
-    print("詳細交易紀錄(附頂部總結)已存到 backtest_results.csv")
+    print("詳細交易紀錄(附一目了然總結)已存到 backtest_results.csv")
 
 if __name__ == "__main__":
     run_backtest()

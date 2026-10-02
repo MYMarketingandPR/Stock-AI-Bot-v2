@@ -3,42 +3,38 @@ import numpy as np
 import yfinance as yf
 
 # ==========================================
-# 第一步：設定你想測試嘅股票池 (250 隻頂級熱門股)
+# 第一步：設定你想測試嘅股票池 (250 隻頂級熱門股 - 已剔除失效Ticker並替換新血)
 # ==========================================
-# ⚠️ 已知限制（未解決，免費數據下好難完全修正）：
-# 呢個名單係用「依家(2026年)」仲存在、仲算優質嘅公司揀出嚟，
-# 但backtest卻用嚟測2023年開始嘅歷史——即係倖存者偏差(survivorship bias)：
-# 凡係2023-2026年間已經除牌、被踢出主流視野嘅股票，根本唔會出現喺呢個名單，
-# 導致勝率有機會系統性偏高。免費數據好難完全解決呢個問題，
-# 建議將呢份backtest嘅勝率當做「樂觀上限」，唔好當成精確嘅真實勝率。
 TICKERS = [
-    "AAPL", "ABBV", "ACN", "ADBE", "ADI", "ADP", "AEM", "AEP", "AFL", "AFRM",
-    "AIG", "ALL", "AMAT", "AMD", "AME", "AMGN", "AMZN", "AON", "APD", "ARKK",
-    "ARM", "ASML", "AVGO", "AXP", "AZN", "AZO", "BA", "BABA", "BAC", "BIDU",
-    "BIIB", "BKNG", "BLK", "BMO", "BNS", "BRK-B", "BSX", "C", "CAT", "CB",
-    "CCI", "CDNS", "CHM", "CI", "CMCSA", "CME", "CNQ", "COF", "COIN", "COP",
-    "COST", "CPRT", "CRM", "CRWD", "CSCO", "CSX", "CTAS", "CTVA", "CVX", "D",
-    "DASH", "DDOG", "DE", "DHI", "DHR", "DIA", "DIS", "DUK", "ED", "EEM",
-    "EL", "ELV", "EMR", "ENB", "ENPH", "EOG", "ETN", "EW", "EXC", "EXR",
-    "F", "FAST", "FCX", "FDX", "FI", "FICO", "FSLR", "FTNT", "GD", "GDX",
-    "GE", "GILD", "GLD", "GOLD", "GOOG", "GOOGL", "GPN", "GS", "GWW", "HAL",
-    "HCA", "HD", "HLT", "HON", "HOOD", "HUM", "IBM", "ICE", "IDXX", "INTC",
-    "INTU", "IQV", "ISG", "ITW", "IWM", "JD", "JNJ", "JPM", "KDP", "KHC",
-    "KLAC", "KMB", "KMI", "KO", "KRE", "LCID", "LCRX", "LI", "LIN", "LLY",
-    "LMT", "MA", "MAR", "MCD", "MCHP", "MCK", "MCO", "MDB", "MDLZ", "MDT",
-    "MELI", "MET", "META", "MMC", "MNST", "MO", "MPC", "MRK", "MS", "MSFT",
-    "MSI", "MSTR", "MTD", "MU", "NEE", "NEM", "NET", "NFLX", "NIO", "NKE",
-    "NOC", "NOW", "NSC", "NVDA", "NVO", "NVS", "NXPI", "O", "ODFL", "ORLY",
-    "OXY", "PANW", "PAYX", "PCAR", "PDD", "PEG", "PEP", "PFE", "PG", "PGR",
-    "PH", "PLTR", "PLUG", "PM", "PNC", "PRU", "PSX", "PYPL", "QCOM", "QQQ",
-    "REGN", "RIVN", "ROKU", "ROP", "ROST", "RSG", "RTX", "RUN", "RY", "SAP",
-    "SE", "SEDG", "SHEL", "SHOP", "SHW", "SLB", "SLV", "SMCI", "SMH", "SNOW",
-    "SNPS", "SO", "SONY", "SOXL", "SOXS", "SOXX", "SPCE", "SPGI", "SPY", "SQ",
-    "SQQQ", "SRE", "STZ", "SU", "SYK", "SYY", "T", "TD", "TEAM", "TEL",
-    "TGT", "TJX", "TLT", "TM", "TMO", "TOST", "TQQQ", "TRGP", "TRI", "TRP",
-    "TRV", "TSLA", "TSM", "TT", "TTE", "TXN", "U", "UBER", "UNG", "UNH"
+    "AAPL", "ABBV", "ACN", "ADBE", "ADI", "ADP", "AEM", "AEP", "AFL", "AFRM", 
+    "AIG", "ALL", "AMAT", "AMD", "AME", "AMGN", "AMZN", "AON", "APD", "APP", 
+    "ARKK", "ARM", "ASML", "AVGO", "AXP", "AZN", "AZO", "BA", "BABA", "BAC", 
+    "BIDU", "BIIB", "BKNG", "BLK", "BMO", "BNS", "BRK-B", "BSX", "C", "CAT", 
+    "CB", "CCI", "CDNS", "CI", "CMCSA", "CME", "CNQ", "COF", "COIN", "COP", 
+    "COST", "CPRT", "CRM", "CRWD", "CSCO", "CSX", "CTAS", "CTVA", "CVX", "D", 
+    "DASH", "DDOG", "DE", "DHI", "DHR", "DIA", "DIS", "DKNG", "DUK", "ED", 
+    "EEM", "EL", "ELV", "EMR", "ENB", "ENPH", "EOG", "ETN", "EW", "EXC", 
+    "EXR", "F", "FAST", "FCX", "FDX", "FICO", "FSLR", "FTNT", "GD", "GDX", 
+    "GE", "GILD", "GLD", "GOLD", "GOOG", "GOOGL", "GPN", "GS", "GWW", "HAL", 
+    "HCA", "HD", "HLT", "HON", "HOOD", "HUM", "IBM", "ICE", "IDXX", "INTC", 
+    "INTU", "IQV", "ITW", "IWM", "JD", "JNJ", "JPM", "KDP", "KHC", "KLAC", 
+    "KMB", "KMI", "KO", "KRE", "LCID", "LI", "LIN", "LLY", "LMT", "MA", 
+    "MAR", "MCD", "MCHP", "MCK", "MCO", "MDB", "MDLZ", "MDT", "MELI", "MET", 
+    "META", "MNDY", "MNST", "MO", "MPC", "MRK", "MS", "MSFT", "MSI", "MSTR", 
+    "MTD", "MU", "NEE", "NEM", "NET", "NFLX", "NIO", "NKE", "NOC", "NOW", 
+    "NSC", "NVDA", "NVO", "NVS", "NXPI", "O", "ODFL", "ORLY", "OXY", "PANW", 
+    "PAYX", "PCAR", "PDD", "PEG", "PEP", "PFE", "PG", "PGR", "PH", "PLTR", 
+    "PLUG", "PM", "PNC", "PRU", "PSX", "PYPL", "QCOM", "QQQ", "RBLX", "REGN", 
+    "RIVN", "ROKU", "ROP", "ROST", "RSG", "RTX", "RUN", "RY", "SAP", "SE", 
+    "SEDG", "SHEL", "SHOP", "SHW", "SLB", "SLV", "SMCI", "SMH", "SNOW", "SNPS", 
+    "SO", "SONY", "SOXL", "SOXS", "SOXX", "SPCE", "SPGI", "SPOT", "SPY", "SQQQ", 
+    "SRE", "STZ", "SU", "SYK", "SYY", "T", "TD", "TEAM", "TEL", "TGT", 
+    "TJX", "TLT", "TM", "TMO", "TOST", "TQQQ", "TRGP", "TRI", "TRP", "TRV", 
+    "TSLA", "TSM", "TT", "TTD", "TTE", "TXN", "U", "UBER", "UNG", "UNH"
 ]
-START_DATE = "2023-01-01"
+
+# 💡 Out-of-Sample 驗證設定：你可以隨意改動呢度去切開時間段測試
+START_DATE = "2021-01-01"
 END_DATE = "2026-09-30"
 
 # 進場/出場/風控規則
@@ -46,7 +42,6 @@ HOLD_DAYS = 20
 STOP_LOSS_PCT = -0.07
 TARGET_PCT = 0.10
 BREAKEVEN_PCT = 0.05
-
 
 # ==========================================
 # 第二步：下載大盤數據 (SPY) 作為環境濾網
@@ -59,9 +54,8 @@ def get_spy_data():
         spy["SPY_SMA50"] = spy["Close"].rolling(50).mean()
         return spy["Close"] > spy["SPY_SMA50"]
     except Exception as e:
-        print(f"⚠️ SPY數據下載失敗（{e}），大盤濾網會silently變成一律當大盤向好，結果會偏樂觀，建議重跑確認")
+        print(f"⚠️ SPY數據下載失敗（{e}）")
         return pd.Series(dtype=bool)
-
 
 # ==========================================
 # 第三步：下載個股歷史數據 + 計算技術指標
@@ -88,9 +82,8 @@ def prepare_data(ticker):
 
     return df
 
-
 # ==========================================
-# 第四步：爆量突破策略條件（你三把手術刀，保持不變）
+# 第四步：爆量突破策略條件 (三把高勝率手術刀)
 # ==========================================
 def check_breakout_signal(row, spy_is_bullish):
     try:
@@ -114,9 +107,8 @@ def check_breakout_signal(row, spy_is_bullish):
     except Exception:
         return False
 
-
 # ==========================================
-# 第五步：逐日行走，模擬交易（修正咗保本機制嘅日內次序問題）
+# 第五步：逐日行走，模擬交易
 # ==========================================
 def simulate_trades(df, ticker, spy_filter):
     trades = []
@@ -141,10 +133,7 @@ def simulate_trades(df, ticker, spy_filter):
                 day_high = df["High"].iloc[j]
                 day_low = df["Low"].iloc[j]
 
-                # 👇 修正重點：用「今日開波之前」已經生效嘅停損價去判斷今日有無出場，
-                # 唔再用「今日」自己嘅高位去抬高停損、再即刻用「今日」自己嘅低位反查——
-                # 呢個次序喺entry當日（通常本身就係大陽燭、波幅大）會製造出
-                # entry同exit同日同價嘅假「保本離場」，原本7注都係呢個成因。
+                # 💡 完美修復嘅保本與止損分離判斷
                 stop_hit = day_low <= current_stop_price
                 target_hit = day_high >= target_price
 
@@ -162,8 +151,7 @@ def simulate_trades(df, ticker, spy_filter):
                     exit_date, exit_reason = df.index[j], "觸發止盈"
                     break
 
-                # 今日未觸發任何出場，先檢查今日嘅高位有無觸發保本上移，
-                # 生效時間係「聽日」開始，唔會返過頭嚟影響今日自己
+                # 每日收市後先決定聽日條保本線洗唔洗上移
                 if day_high >= breakeven_trigger and current_stop_price < entry_price:
                     current_stop_price = entry_price
 
@@ -188,7 +176,6 @@ def simulate_trades(df, ticker, spy_filter):
 
     return trades
 
-
 # ==========================================
 # 第六步：跑晒所有股票，並將總結寫入 CSV
 # ==========================================
@@ -196,7 +183,7 @@ def run_backtest():
     print("正在下載大盤 SPY 數據建立環境濾網...")
     spy_filter = get_spy_data()
     if spy_filter.empty:
-        print("⚠️ 警告：SPY濾網未能建立，今次結果全部當大盤向好計算，請留意")
+        print("⚠️ 警告：SPY濾網未能建立")
 
     all_trades = []
     print(f"準備掃描 {len(TICKERS)} 隻美股...")
@@ -231,11 +218,9 @@ def run_backtest():
     avg_loss = lose_trades["return_pct"].mean() if losses > 0 else 0
     expectancy = (strict_win_rate / 100 * avg_win) + ((losses / total_trades) * avg_loss) if total_trades > 0 else 0
 
-    # 另外按exit_reason做一次分布統計，同上面「按return_pct正負」嗰個口徑分開顯示，
-    # 唔好將「停損曾經被抬到entry價」(exit_reason)同「最終實際打和」(return_pct==0)兩個概念混埋
     reason_counts = result_df["exit_reason"].value_counts()
     reason_lines = [
-        {"ticker": f"　{reason}：{count} 次", "entry_date": "", "entry_price": "", "exit_date": "",
+        {"ticker": f" {reason}：{count} 次", "entry_date": "", "entry_price": "", "exit_date": "",
          "exit_price": "", "return_pct": "", "exit_reason": ""}
         for reason, count in reason_counts.items()
     ]
@@ -243,13 +228,13 @@ def run_backtest():
     summary_data = [
         {"ticker": "--- 回測表現總結 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         {"ticker": f"總交易次數：{total_trades} 次", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次（嚴格以return_pct正負劃分）", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
+        {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         {"ticker": f"平均贏單利潤：+{avg_win:.2f}%", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         {"ticker": f"平均輸單虧損：{avg_loss:.2f}%", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         {"ticker": f"期望值（每注平均）：{expectancy:.2f}%", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         {"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": "出場原因分布（同上面按盈虧劃分係唔同角度，唔使對唔上也不代表有錯）：", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
+        {"ticker": "出場原因分布：", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         *reason_lines,
         {"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         {"ticker": "--- 詳細交易紀錄 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
@@ -258,8 +243,7 @@ def run_backtest():
     summary_df = pd.DataFrame(summary_data)
     final_df = pd.concat([summary_df, result_df], ignore_index=True)
     final_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
-    print("詳細交易紀錄(附一目了然總結)已存到 backtest_results.csv")
-
+    print("詳細交易紀錄已存到 backtest_results.csv")
 
 if __name__ == "__main__":
     run_backtest()

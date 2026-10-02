@@ -12,10 +12,12 @@ from strategy_core import (
     compute_indicators,
     check_breakout_signal,
     MEGA_CAP_TICKERS,
-    HIGH_BETA_TICKERS,
 )
 
-WATCHLIST = MEGA_CAP_TICKERS + HIGH_BETA_TICKERS
+# ==========================================
+# 0. 股票池（100% 集中火力於 72% 勝率的 Mega Cap）
+# ==========================================
+WATCHLIST = MEGA_CAP_TICKERS
 
 # ==========================================
 # 1. 鑰匙設定
@@ -73,14 +75,12 @@ def get_market_context():
 def calculate_extra_indicators(df):
     """計算 MACD, KDJ, 神奇九轉 (TD Sequential)"""
     df = df.copy()
-    # MACD
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
     df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['Hist'] = df['MACD'] - df['Signal']
     
-    # KDJ (9,3,3)
     low_min = df['Low'].rolling(window=9).min()
     high_max = df['High'].rolling(window=9).max()
     df['RSV'] = 100 * ((df['Close'] - low_min) / (high_max - low_min))
@@ -88,7 +88,6 @@ def calculate_extra_indicators(df):
     df['D'] = df['K'].ewm(com=2, adjust=False).mean()
     df['J'] = 3 * df['K'] - 2 * df['D']
     
-    # 神奇九轉 (TD Setup)
     df['TD_Setup'] = 0
     setup_count = 0
     for i in range(4, len(df)):
@@ -100,7 +99,7 @@ def calculate_extra_indicators(df):
     return df
 
 def scan_breakout_candidates(spy_bullish):
-    print(f"正在批次下載 {len(WATCHLIST)} 隻股票嘅歷史數據...")
+    print(f"正在批次下載 {len(WATCHLIST)} 隻 Mega Cap 股票歷史數據...")
     candidates = []
     try:
         batch = yf.download(WATCHLIST, period="1y", group_by="ticker", threads=True, progress=False)
@@ -161,12 +160,11 @@ def format_quant_snapshot_text(c):
     return "\n".join(lines)
 
 # ==========================================
-# 4. AI 提示詞 (終極修復版)
+# 4. AI 提示詞 (極致資金效率版)
 # ==========================================
 def load_prompt(candidate, sector, eps_growth, news_text):
     ticker = candidate["ticker"]
     date = datetime.now().strftime("%Y-%m-%d")
-    group = "Mega Cap（傳統巨無霸）" if ticker in MEGA_CAP_TICKERS else "High Beta（高動能）"
     quant_text = format_quant_snapshot_text(candidate)
 
     return f"""
@@ -175,10 +173,10 @@ def load_prompt(candidate, sector, eps_growth, news_text):
 【格式鐵律】：
 1. 禁止使用Markdown表格語法（帶 |---|），改用清單點(-)同粗體標題(###)。
 2. 【誠實原則】：量化數據已經確立，但若基本面或新聞資訊不足以支撐這筆突破，請老實註明「資料不足，風險較高」，絕不可捏造行業背景或未來催化劑。
-3. 【模型背景】：此「爆量缺口突破」策略在歷史回測中具備正期望值（Mega Cap 勝率極高約 70%，High Beta 波動較大約 50%）。請參考此背景，但必須根據下方實際數據進行獨立評估，勿盲目給出高分。
+3. 【模型背景】：此「爆量缺口突破」策略在歷史回測中具備極高正期望值（Mega Cap 大型股勝率高達 72%）。請參考此強大背景，但必須根據下方實際數據進行獨立評估。
 4. 【輔助指標應用】：請觀察 MACD、KDJ 和 神奇九轉。若出現「TD Setup 達 8 或 9」或「KDJ 極度超買(>80)」等動能衰竭跡象，請在紅隊壓力測試中嚴厲警告。
 
-分析標的：{ticker}（日期：{date} ｜ 分組：{group}）
+分析標的：{ticker}（日期：{date} ｜ 分組：Mega Cap 傳統巨無霸）
 
 【實際技術與量化數據】：
 {quant_text}
@@ -191,7 +189,7 @@ def load_prompt(candidate, sector, eps_growth, news_text):
 ---
 ### 階段一：終極決策前置
 - 【指令】：(強烈買入 / 輕倉試探 / 防守觀望)
-- 【主觀勝率】：基於實際數據與行業板塊動能獨立判斷（若欠缺資訊或出現衰竭訊號，請如實降低評分）
+- 【主觀勝率】：基於實際數據與行業板塊動能獨立判斷（基準為 72%，若欠缺資訊或出現衰竭訊號，請如實降低評分）
 - 【期望值(EV)】：+/- X.XX%
 - 【核心邏輯】：精煉解釋決策原因，基於哪一項數據？
 
@@ -200,9 +198,9 @@ def load_prompt(candidate, sector, eps_growth, news_text):
 
 ### 階段三：量化風控參數
 - Entry（買入價）：$XX.XX
-- Stop-Loss（止損）：$XX.XX（嚴格定於買入價 -7%）
-- Target T1（止盈）：$XX.XX（嚴格定於買入價 +10%）
-- 資金保護策略：持倉最長 20 日；獲利達 +5% 則保本平保。
+- Stop-Loss（硬性止損）：$XX.XX（嚴格定於買入價 -7%）
+- Target T1（波段止盈）：$XX.XX（嚴格定於買入價 +10%）
+- 資金保護策略：最大持倉 20 日；【時間止損】若持有 10 日未達 +3% 利潤則強制平倉釋放資金；【保本機制】獲利達 +5% 將止損上移至買入價。
 
 ### 階段四：紅隊壓力測試
 - 致命陷阱：這筆突破最大的潛在風險、超買跡象 (如 神奇九轉或 KDJ 鈍化) 或基本面盲區是什麼？
@@ -219,11 +217,11 @@ def main():
         msg = "⚠️ **大盤濾網啟動**\n標普500跌破50日均線，目前禁止做多，AI 提早下班。"
         send_telegram(msg); return
 
-    send_telegram(f"⏳ **AI交易員已上線**\n📊 VIX: `{vix:.2f}`\n正在批次掃描 {len(WATCHLIST)} 隻股票...")
+    send_telegram(f"⏳ **AI交易員已上線**\n📊 VIX: `{vix:.2f}`\n正在批次掃描 {len(WATCHLIST)} 隻 Mega Cap 核心股...")
     candidates = scan_breakout_candidates(spy_bullish)
 
     if not candidates:
-        msg = f"⚠️ 今日 {len(WATCHLIST)} 隻核心股皆無觸發爆量突破，守住資金，提早下班。"
+        msg = f"⚠️ 今日 {len(WATCHLIST)} 隻核心股皆無觸發爆量突破，守住資金賺取 IB01 無風險利息，提早下班。"
         send_telegram(msg); return
 
     names = ", ".join(c["ticker"] for c in candidates)
@@ -243,8 +241,7 @@ def main():
                 temperature=0.2,
             )
             analysis = response.choices[0].message.content
-            group = "Mega Cap" if t in MEGA_CAP_TICKERS else "High Beta"
-            send_telegram(f"🔥 **【{t}｜{group}】機密備忘錄** 🔥\n\n{analysis[:3800]}")
+            send_telegram(f"🔥 **【{t}｜Mega Cap】機密備忘錄** 🔥\n\n{analysis[:3800]}")
             log_to_google_sheet(t, "Volume Breakout", vix, analysis)
             time.sleep(5)
         except Exception as e: print(f"❌ 分析 {t} 失敗: {e}")

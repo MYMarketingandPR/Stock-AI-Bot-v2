@@ -70,7 +70,7 @@ def prepare_data(ticker):
     return df
 
 # ==========================================
-# 第四步：設定爆量突破策略條件
+# 第四步：設定爆量突破策略條件 (新增 RSI 超買濾網)
 # ==========================================
 def check_breakout_signal(row, spy_is_bullish):
     try:
@@ -84,12 +84,13 @@ def check_breakout_signal(row, spy_is_bullish):
             and bool(row["GapUp"])
             and row["ChangeFromOpen"] >= 0.02
             and row["RelVol"] >= 2.5 
+            and row["RSI14"] < 85 # 💡 修改：放寬至 85，容許強勢超買，只防禦極端泡沫
         )
     except Exception:
         return False
 
 # ==========================================
-# 第五步：逐日行走，模擬交易
+# 第五步：逐日行走，模擬交易 (新增時間止損)
 # ==========================================
 def simulate_trades(df, ticker, spy_filter):
     trades = []
@@ -113,11 +114,13 @@ def simulate_trades(df, ticker, spy_filter):
                 day_open = df["Open"].iloc[j]
                 day_high = df["High"].iloc[j]
                 day_low = df["Low"].iloc[j]
+                day_close = df["Close"].iloc[j]
                 
-                # 保本機制
+                # 1. 保本機制
                 if day_high >= breakeven_trigger and current_stop_price < entry_price:
                     current_stop_price = entry_price
                 
+                # 2. 止損與止盈檢測
                 stop_hit = day_low <= current_stop_price
                 target_hit = day_high >= target_price
                 
@@ -133,6 +136,14 @@ def simulate_trades(df, ticker, spy_filter):
                 elif target_hit:
                     exit_price = target_price
                     exit_date, exit_reason = df.index[j], "觸發止盈"
+                    break
+                
+              # 3. 時間止損 (Time Stop) 微調
+                days_held = j - i 
+                # 💡 修改：持有 10 日後，只有當帳面為「負數(虧損)」時才提早釋放資金
+                if days_held == 10 and day_close < entry_price:
+                    exit_price = day_close
+                    exit_date, exit_reason = df.index[j], "時間止損(10日未能獲利)"
                     break
                     
             if exit_price is None:

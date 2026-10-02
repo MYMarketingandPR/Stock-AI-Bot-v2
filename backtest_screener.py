@@ -18,11 +18,11 @@ TICKERS = [
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
-# 進場/出場/風控規則 (已優化)
-HOLD_DAYS = 10         # 買入後最多持有交易日
-STOP_LOSS_PCT = -0.07  # 初始止損 -7%
+# 進場/出場/風控規則 (波段優化版)
+HOLD_DAYS = 20         # 延長至 20 個交易日 (給予充足時間發酵)
+STOP_LOSS_PCT = -0.07  # 止損 -7%
 TARGET_PCT = 0.15      # 止盈 +15%
-BREAKEVEN_PCT = 0.05   # 保本觸發點：利潤達 +5% 時，止損上移至買入價
+BREAKEVEN_PCT = 0.08   # 升達 +8% 才啟動保本機制
 
 # ==========================================
 # 第二步：下載大盤數據 (SPY) 作為環境濾網
@@ -76,14 +76,15 @@ def prepare_data(ticker):
 def check_breakout_signal(row, spy_is_bullish):
     try:
         return (
-            spy_is_bullish # 大盤濾網：SPY 必須在 50MA 之上
+            spy_is_bullish
             and row["Close"] > 15
             and row["Close"] > row["SMA50"]
             and row["Close"] > row["SMA200"]
+            and row["Close"] < row["SMA50"] * 1.15  # 新增：防追高濾網 (距離50MA不超過15%)
             and row["PctFrom52wHigh"] >= -0.05
             and bool(row["GapUp"])
             and row["ChangeFromOpen"] >= 0.02
-            and row["RelVol"] >= 3 # 收緊：成交量必須爆發 3 倍以上
+            and row["RelVol"] >= 3 
         )
     except Exception:
         return False

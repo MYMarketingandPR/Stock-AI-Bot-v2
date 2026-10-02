@@ -208,15 +208,17 @@ def get_technical_snapshot(ticker):
 # 4. 兩套獨立篩選條件
 # ==========================================
 def get_short_squeeze_filters():
+    # 已移除 'Short Ratio' —— 呢個filter key喺呢個finvizfinance版本根本唔存在，
+    # 錯誤log直接確認咗；冇「days to cover」嘅原生filter，想要呢個數據要另外用finvizfinance
+    # 嘅個股fundament查詢，呢度先簡化處理。
     return {
         "Float Short": "Over 15%",
         "Float": "Under 50M",
-        "Short Ratio": "Over 3",
         "Average Volume": "Over 500K",
         "Relative Volume": "Over 2",
         "Price": "Over $3",
-        "52-Week High/Low": "0-20% below High",
-        "Institutional Ownership": "Under 50%",
+        "52-Week High/Low": "0-10% below High",  # 原本0-20%唔存在，Finviz貼近高位淨係有0-3/0-5/0-10%
+        "InstitutionalOwnership": "Under 50%",  # 已修正：冇空格
     }
 
 
@@ -227,11 +229,16 @@ def get_minervini_filters():
         "Average Volume": "Over 500K",
         "50-Day Simple Moving Average": "Price above SMA50",
         "200-Day Simple Moving Average": "Price above SMA200",
-        "52-Week High/Low": "0-25% below High",
-        "EPS growth this year": "Positive (>0%)",
-        "EPS growth qtr over qtr": "Positive (>0%)",
-        "Sales growth qtr over qtr": "Positive (>0%)",
-        "Institutional Ownership": "Over 10%",
+        "52-Week High/Low": "0-10% below High",  # 原本0-25%唔存在；Finviz冇對應preset，
+                                                    # 呢度用最接近、但比Minervini原意更嚴格嘅0-10%，
+                                                    # 如果想要25%，要喺refine_minervini_candidates()
+                                                    # 用實際價格/52週高位數值另外計，呢度未做呢part
+        "EPS growththis year": "Positive (>0%)",   # 已修正：field名冇空格（錯誤log確認）；
+                                                    # 但 "Positive (>0%)" 呢個數值字串未經錯誤log驗證，
+                                                    # 跑之前請用下面嘅方法自己confirm一次
+        "EPS growthqtr over qtr": "Positive (>0%)",
+        "Sales growthqtr over qtr": "Positive (>0%)",
+        "InstitutionalOwnership": "Over 10%",
     }
 
 

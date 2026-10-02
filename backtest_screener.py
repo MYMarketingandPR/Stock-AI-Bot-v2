@@ -3,10 +3,8 @@ import numpy as np
 import yfinance as yf
 
 # ==========================================
-# 第一步：選擇你想測試嘅股票池群組 ("MEGA_CAP" 或者是 "HIGH_BETA")
+# 第一步：設定分組股票池
 # ==========================================
-TEST_GROUP = "HIGH_BETA"  # 💡 更改此處：跑完一次後，將呢度改成 "MEGA_CAP" 再跑第二次
-
 MEGA_CAP_TICKERS = [
     "AAPL", "ABBV", "ACN", "ADBE", "ADI", "ADP", "AEM", "AEP", "AFL", "AIG", 
     "ALL", "AMAT", "AMD", "AME", "AMGN", "AMZN", "AON", "APD", "ASML", "AVGO", 
@@ -39,7 +37,10 @@ HIGH_BETA_TICKERS = [
     "UNG"
 ]
 
-TICKERS = MEGA_CAP_TICKERS if TEST_GROUP == "MEGA_CAP" else HIGH_BETA_TICKERS
+TICKER_GROUPS = {
+    "MEGA_CAP (傳統巨無霸與穩健增長)": MEGA_CAP_TICKERS,
+    "HIGH_BETA (高動能與投機性科技股)": HIGH_BETA_TICKERS
+}
 
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
@@ -182,7 +183,7 @@ def simulate_trades(df, ticker, spy_filter):
     return trades
 
 # ==========================================
-# 第六步：跑晒所有股票，並將總結寫入 CSV
+# 第六步：跑晒所有組別，並將總結上下合併寫入同一個 CSV
 # ==========================================
 def run_backtest():
     print("正在下載大盤 SPY 數據建立環境濾網...")
@@ -190,66 +191,88 @@ def run_backtest():
     if spy_filter.empty:
         print("⚠️ 警告：SPY濾網未能建立")
 
-    all_trades = []
-    print(f"準備掃描 {TEST_GROUP} 組別的 {len(TICKERS)} 隻美股...")
-    for t in TICKERS:
-        print(f"處理緊 {t}...")
-        df = prepare_data(t)
-        if df is None:
+    all_groups_dataframes = []
+
+    for group_name, tickers in TICKER_GROUPS.items():
+        print(f"\n======================================")
+        print(f"準備掃描 {group_name} 組別的 {len(tickers)} 隻美股...")
+        print(f"======================================")
+        
+        all_trades = []
+        for t in tickers:
+            print(f"處理緊 {t}...")
+            df = prepare_data(t)
+            if df is None:
+                continue
+            trades = simulate_trades(df, t, spy_filter)
+            if trades:
+                print(f" {t} 觸發咗 {len(trades)} 次訊號")
+            all_trades.extend(trades)
+
+        if not all_trades:
+            print(f"\n{group_name} 完全冇觸發任何交易訊號...")
+            summary_data = [{"ticker": f"=== {group_name} 回測表現總結 ==="}, {"ticker": "無交易紀錄"}]
+            # 填補缺失嘅 column 防止 concat 報錯
+            for d in summary_data:
+                for k in ["entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "exit_reason"]:
+                    if k not in d: d[k] = ""
+            all_groups_dataframes.append(pd.DataFrame(summary_data))
+            all_groups_dataframes.append(pd.DataFrame([{"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""} for _ in range(4)]))
             continue
-        trades = simulate_trades(df, t, spy_filter)
-        if trades:
-            print(f" {t} 觸發咗 {len(trades)} 次訊號")
-        all_trades.extend(trades)
 
-    if not all_trades:
-        print(f"\n{TEST_GROUP} 完全冇觸發任何交易訊號...")
-        pd.DataFrame(columns=["ticker", "entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "exit_reason"]).to_csv(
-            f"backtest_results_{TEST_GROUP}.csv", index=False, encoding="utf-8-sig"
-        )
-        return
+        result_df = pd.DataFrame(all_trades)
 
-    result_df = pd.DataFrame(all_trades)
+        total_trades = len(result_df)
+        win_trades = result_df[result_df["return_pct"] > 0]
+        lose_trades = result_df[result_df["return_pct"] < 0]
+        be_trades = result_df[result_df["return_pct"] == 0]
 
-    total_trades = len(result_df)
-    win_trades = result_df[result_df["return_pct"] > 0]
-    lose_trades = result_df[result_df["return_pct"] < 0]
-    be_trades = result_df[result_df["return_pct"] == 0]
+        wins, losses, bes = len(win_trades), len(lose_trades), len(be_trades)
+        strict_win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
+        adj_win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
+        avg_win = win_trades["return_pct"].mean() if wins > 0 else 0
+        avg_loss = lose_trades["return_pct"].mean() if losses > 0 else 0
+        expectancy = (strict_win_rate / 100 * avg_win) + ((losses / total_trades) * avg_loss) if total_trades > 0 else 0
 
-    wins, losses, bes = len(win_trades), len(lose_trades), len(be_trades)
-    strict_win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
-    adj_win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
-    avg_win = win_trades["return_pct"].mean() if wins > 0 else 0
-    avg_loss = lose_trades["return_pct"].mean() if losses > 0 else 0
-    expectancy = (strict_win_rate / 100 * avg_win) + ((losses / total_trades) * avg_loss) if total_trades > 0 else 0
+        reason_counts = result_df["exit_reason"].value_counts()
+        reason_lines = [
+            {"ticker": f" {reason}：{count} 次"}
+            for reason, count in reason_counts.items()
+        ]
 
-    reason_counts = result_df["exit_reason"].value_counts()
-    reason_lines = [
-        {"ticker": f" {reason}：{count} 次", "entry_date": "", "entry_price": "", "exit_date": "",
-         "exit_price": "", "return_pct": "", "exit_reason": ""}
-        for reason, count in reason_counts.items()
-    ]
+        summary_data = [
+            {"ticker": f"=== {group_name} 回測表現總結 ==="},
+            {"ticker": f"總交易次數：{total_trades} 次"},
+            {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次"},
+            {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）"},
+            {"ticker": f"平均贏單利潤：+{avg_win:.2f}%"},
+            {"ticker": f"平均輸單虧損：{avg_loss:.2f}%"},
+            {"ticker": f"期望值（每注平均）：{expectancy:.2f}%"},
+            {"ticker": ""},
+            {"ticker": "出場原因分布："},
+            *reason_lines,
+            {"ticker": ""},
+            {"ticker": f"--- {group_name} 詳細交易紀錄 ---"},
+        ]
 
-    summary_data = [
-        {"ticker": f"--- {TEST_GROUP} 回測表現總結 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": f"總交易次數：{total_trades} 次", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": f"平均贏單利潤：+{avg_win:.2f}%", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": f"平均輸單虧損：{avg_loss:.2f}%", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": f"期望值（每注平均）：{expectancy:.2f}%", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": "出場原因分布：", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        *reason_lines,
-        {"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-        {"ticker": "--- 詳細交易紀錄 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
-    ]
+        # 填補缺失嘅 column 防止 concat 報錯
+        for d in summary_data:
+            for k in ["entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "exit_reason"]:
+                if k not in d: d[k] = ""
 
-    summary_df = pd.DataFrame(summary_data)
-    final_df = pd.concat([summary_df, result_df], ignore_index=True)
-    file_name = "backtest_results.csv" # 寫死用返舊名，Action 就會搵得到
-    final_df.to_csv(file_name, index=False, encoding="utf-8-sig")
-    print(f"詳細交易紀錄已存到 {file_name}")
+        summary_df = pd.DataFrame(summary_data)
+        group_final_df = pd.concat([summary_df, result_df], ignore_index=True)
+        all_groups_dataframes.append(group_final_df)
+        
+        # 喺兩個群組之間加 5 行空白，方便 Excel 睇
+        empty_lines = pd.DataFrame([{"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""} for _ in range(5)])
+        all_groups_dataframes.append(empty_lines)
+
+    # 最終合併並輸出為原本 GitHub Actions 認得嘅 backtest_results.csv
+    final_combined_df = pd.concat(all_groups_dataframes, ignore_index=True)
+    file_name = "backtest_results.csv"
+    final_combined_df.to_csv(file_name, index=False, encoding="utf-8-sig")
+    print(f"\n✅ 雙組別詳細交易紀錄已完美整合並存到 {file_name}")
 
 if __name__ == "__main__":
     run_backtest()

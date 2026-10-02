@@ -64,13 +64,13 @@ def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
             if prices:
                 stop_loss = prices[0]
 
-    # 3. 風控守門員：檢查「做多策略」下，止損價是否荒謬地高於入場價
+    # 3. 風控守門員：檢查「做多策略」下，止損價是否高於入場價
     try:
         p_val = float(pivot)
         s_val = float(stop_loss)
         if s_val >= p_val:
             stop_loss = f"{s_val}(⚠️顛倒)"
-            print(f"⚠️ 警告：{ticker} 止損價 (${s_val}) 高於入場價 (${p_val})，AI 點位邏輯錯誤！")
+            print(f"⚠️️ 警告：{ticker} 止損價 (${s_val}) 高於入場價 (${p_val})，AI 點位邏輯錯誤！")
     except:
         pass
 
@@ -142,7 +142,7 @@ def get_technical_snapshot(ticker):
     """加強版：抓取完整的技術與基本面數據，滿足 Minervini 策略需求"""
     try:
         stock = yf.Ticker(ticker)
-        df = stock.history(period="1y") # 攞足一年數據計 150/200 MA 同 RS
+        df = stock.history(period="1y") 
         info = stock.info
 
         if df.empty or len(df) < 60:
@@ -184,7 +184,7 @@ def get_technical_snapshot(ticker):
                 count, direction = 0, None
         nine_turn_status = f"{'向上' if direction == 'up' else '向下'}第{min(count, 9)}轉" if direction else "無明顯九轉"
 
-        # 1. 基本面與行業資料 (解決行業與增長率缺失)
+        # 1. 基本面與行業資料
         sector = info.get('sector', '無法確認')
         industry = info.get('industry', '無法確認')
         eps_growth = info.get('earningsQuarterlyGrowth', '資料不足')
@@ -192,18 +192,18 @@ def get_technical_snapshot(ticker):
         if isinstance(eps_growth, float): eps_growth = f"{eps_growth*100:.1f}%"
         if isinstance(sales_growth, float): sales_growth = f"{sales_growth*100:.1f}%"
 
-        # 2. 短倉數據 (解決 Short Ratio 問題)
+        # 2. 短倉數據
         short_ratio = info.get('shortRatio', '資料不足')
         short_pct = info.get('shortPercentOfFloat', '資料不足')
         if isinstance(short_pct, float): short_pct = f"{short_pct*100:.1f}%"
 
-        # 3. 完整均線系統 (解決 150/200 MA 缺失)
+        # 3. 完整均線系統
         sma50 = close.rolling(50).mean().iloc[-1]
         sma150 = close.rolling(150).mean().iloc[-1] if len(close) >= 150 else "數據不足"
         sma200 = close.rolling(200).mean().iloc[-1] if len(close) >= 200 else "數據不足"
         high52w = close.rolling(min(len(close), 252)).max().iloc[-1]
         
-        # 4. 相對強度 RS (簡化版一年回報率)
+        # 4. 相對強度 RS Proxy
         rs_1y = ((close.iloc[-1] / close.iloc[0]) - 1) * 100 if len(close) >= 200 else "數據不足"
         vol_ratio = vol.iloc[-1] / vol.rolling(20).mean().iloc[-1] if len(vol) >= 20 else 1.0
 
@@ -293,12 +293,12 @@ def refine_minervini_candidates(tickers):
     return df_result.sort_values("rs_rank_in_pool", ascending=False)
 
 # ==========================================
-# 5. AI 提示詞 (解開封印)
+# 5. AI 提示詞 (Telegram 專用清晰清單排版)
 # ==========================================
 STRATEGY_DESC = {
-    "短擠壓Setup": "高空倉比率被逼平倉的軋空邏輯，唔靠基本面，靠空倉結構同成交量爆發判斷。",
+    "短擠壓Setup": "高空倉比率被逼平倉的軋空邏輯，不靠基本面，靠空倉結構與成交量爆發判斷。",
     "Minervini Trend Template": "SEPA式強勢股邏輯：基本面(EPS/銷售增長)配合技術面趨勢排列。",
-    "人手指定(雙框架評估)": "請同時用短擠壓同Minervini Trend Template兩套框架分別評估呢隻股票。"
+    "人手指定(雙框架評估)": "請同時用短擠壓與Minervini Trend Template兩套框架分別評估這隻股票。"
 }
 
 def load_prompt(ticker, strategy_name, news_text, stocktwits_text, tech_text):
@@ -309,15 +309,15 @@ def load_prompt(ticker, strategy_name, news_text, stocktwits_text, tech_text):
 角色設定：
 請你化身一位擁有 30 年華爾街對沖基金 CIO 的頂尖專家。
 
-【嚴格規則必須遵守】：
-你只可以使用下面【實際技術數據】、【即時新聞摘要】、【StockTwits散戶情緒】三個區塊入面提供嘅真實資料嚟分析。唔准自行創作或憑記憶補充未提供嘅客觀數值。但【主觀勝率】與【期望值(EV)】為例外，你必須基於現有技術與基本面數據，以 CIO 的專業視角進行主觀估算，絕對不可回答資料不足。
+【格式與排版鐵律 - 必須嚴格遵守】：
+1. 🚫 **絕對禁止使用任何 Markdown 表格語法** (即帶有 |---| 豎線欄位的表格)！表格在 Telegram 手機介面會完全擠壓變形破版。
+2. 格式必須使用【清單點 Bullet Points (`-`)】與【粗體標題 (`###`)】，各區塊之間請用「空行」清晰隔開，讓手機閱讀非常舒適。
+3. 客觀數據不准捏造，但【主觀勝率】與【期望值(EV)】你必須基於現有數據進行專業估算，絕不可回答「資料不足」。
 
-核心目標：為我剖析股票：{ticker}
-數據截止日期：{date}
+核心目標：為我剖析股票：{ticker} (日期：{date})
 
-【當前系統觸發的策略】：{strategy_name}
+【當前系統觸發策略】：{strategy_name}
 【策略核心邏輯】：{strategy_logic}
-請根據呢個邏輯評估，但前提是唔違反上面「嚴格規則」。
 
 【實際技術數據】：
 {tech_text}
@@ -328,22 +328,28 @@ def load_prompt(ticker, strategy_name, news_text, stocktwits_text, tech_text):
 【StockTwits散戶情緒】：
 {stocktwits_text}
 
-階段一：終極決策前置
+---
+
+### 階段一：終極決策前置
 - 【指令】：(強烈買入 / 輕倉試探 / 防守觀望 / 嚴格避開)
 - 【主觀勝率】：XX%
 - 【期望值(EV)】：+/- X.XX%
-- 【一句話核心邏輯】：精煉解釋決策原因，並註明係基於上面邊一項實際數據。
+- 【核心邏輯】：精煉解釋決策原因，並註明是基於哪一項實際數據。
 
-階段二：族群與基本面背景
-1. 請根據【實際技術數據】或【即時新聞摘要】提供的資訊，總結公司所屬行業與背景。如果完全沒有提供，才明確寫低「無法確認所屬行業」。
+### 階段二：族群與基本面背景
+- 請根據【實際技術數據】與【即時新聞】總結公司所屬行業與營運背景。
 
-階段三：技術面與極致風控 (必須基於【實際技術數據】區塊嘅數字)
-1. 確認技術型態是否符合【{strategy_name}】的邏輯，引用返上面實際嘅現價/均線/指標數值。
-2. 標出最佳 Entry 買入價與硬性止損點位 (Stop-Loss)。注意：這是一筆「做多」交易，止損價必須嚴格低於買入價。
-3. 目標價 T1/T2，展示 RRR ≥ 3:1。
+### 階段三：技術面與極致風控 (條列式呈現)
+- 技術型態診斷：引用實際現價、均線與指標逐一診斷。
+- Entry (最佳買入價)：$XX.XX (簡述計算依據)
+- Stop-Loss (硬性止損)：$XX.XX (注意：做多交易止損價必須低於買入價)
+- Target T1：$XX.XX
+- Target T2：$XX.XX
+- 風險報酬比 (RRR)：展示 RRR ≥ 3:1 之計算。
 
-階段四：紅隊壓力測試
-1. 這筆交易最大的陷阱是什麼？如果虧損，最可能是什麼原因？
+### 階段四：紅隊壓力測試
+- 致命陷阱：這筆交易最大的陷阱是什麼？
+- 虧損主因：若虧損最可能的原因是什麼？
 """
 
 def risk_check_override(analysis_text, ticker):
@@ -408,7 +414,7 @@ def main():
             
             passed, reason = risk_check_override(analysis, ticker)
             if not passed:
-                send_telegram(f"⚠️ **【{ticker}】遭紅隊否決**\n原因: {reason}")
+                send_telegram(f"⚠️️ **【{ticker}】遭紅隊否決**\n原因: {reason}")
                 continue
             
             send_telegram(f"🔥 **【{ticker}｜{strategy_name}】 機密備忘錄** 🔥\n\n{analysis[:3800]}")

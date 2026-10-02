@@ -1,59 +1,30 @@
 import pandas as pd
-import numpy as np
 import yfinance as yf
 
-# ==========================================
-# 第一步：設定分組股票池
-# ==========================================
-MEGA_CAP_TICKERS = [
-    "AAPL", "ABBV", "ACN", "ADBE", "ADI", "ADP", "AEM", "AEP", "AFL", "AIG", 
-    "ALL", "AMAT", "AMD", "AME", "AMGN", "AMZN", "AON", "APD", "ASML", "AVGO", 
-    "AXP", "AZN", "AZO", "BA", "BAC", "BIIB", "BKNG", "BLK", "BMO", "BNS", 
-    "BRK-B", "BSX", "C", "CAT", "CB", "CCI", "CDNS", "CI", "CMCSA", "CME", 
-    "CNQ", "COF", "COP", "COST", "CPRT", "CRM", "CSCO", "CSX", "CTAS", "CTVA", 
-    "CVX", "D", "DE", "DHI", "DHR", "DIA", "DIS", "DUK", "ED", "EL", 
-    "ELV", "EMR", "ENB", "EOG", "ETN", "EW", "EXC", "EXR", "F", "FAST", 
-    "FCX", "FDX", "FICO", "FTNT", "GD", "GDX", "GE", "GILD", "GLD", "GOLD", 
-    "GOOG", "GOOGL", "GPN", "GS", "GWW", "HAL", "HCA", "HD", "HLT", "HON", 
-    "HUM", "IBM", "ICE", "IDXX", "INTC", "INTU", "IQV", "ITW", "IWM", "JNJ", 
-    "JPM", "KDP", "KHC", "KLAC", "KMB", "KMI", "KO", "LIN", "LLY", "LMT", 
-    "MA", "MAR", "MCD", "MCHP", "MCK", "MCO", "MDLZ", "MDT", "MET", "META", 
-    "MNST", "MO", "MPC", "MRK", "MS", "MSFT", "MSI", "MTD", "MU", "NEE", 
-    "NEM", "NFLX", "NKE", "NOC", "NOW", "NSC", "NVDA", "NVO", "NVS", "NXPI", 
-    "O", "ODFL", "ORLY", "OXY", "PANW", "PAYX", "PCAR", "PEG", "PEP", "PFE", 
-    "PG", "PGR", "PH", "PM", "PNC", "PRU", "PSX", "PYPL", "QCOM", "REGN", 
-    "ROP", "ROST", "RSG", "RTX", "RY", "SAP", "SHEL", "SHW", "SLB", "SLV", 
-    "SMH", "SNPS", "SO", "SONY", "SPGI", "SPY", "SRE", "STZ", "SU", "SYK", 
-    "SYY", "T", "TD", "TEL", "TGT", "TJX", "TM", "TMO", "TRGP", "TRI", 
-    "TRP", "TRV", "TSLA", "TSM", "TT", "TTE", "TXN", "UBER", "UNH"
-]
+from strategy_core import compute_indicators, check_breakout_signal, MEGA_CAP_TICKERS, HIGH_BETA_TICKERS
 
-HIGH_BETA_TICKERS = [
-    "AFRM", "APP", "ARKK", "ARM", "BABA", "BIDU", "COIN", "CRWD", "DASH", "DDOG", 
-    "DKNG", "EEM", "ENPH", "FSLR", "HOOD", "JD", "KRE", "LCID", "LI", "MDB", 
-    "MELI", "MNDY", "MSTR", "NET", "NIO", "PDD", "PLTR", "PLUG", "QQQ", "RBLX", 
-    "RIVN", "ROKU", "RUN", "SE", "SEDG", "SHOP", "SMCI", "SNOW", "SOXL", "SOXS", 
-    "SOXX", "SPCE", "SPOT", "SQQQ", "TEAM", "TLT", "TOST", "TQQQ", "TTD", "U", 
-    "UNG"
-]
+# ==========================================
+# 第一步：股票池（已搬去strategy_core.py，兩個檔共用同一份，唔會再漂移）
+# ==========================================
+# ⚠️ 已知限制（未解決）：呢份名單用「依家」仲存在、仲算優質嘅公司揀出嚟，
+# 但backtest卻用嚟測2023年開始嘅歷史——即係倖存者偏差(survivorship bias)，
+# 凡係2023-2026年間已經除牌/淡出視野嘅股票，根本唔會出現喺呢個名單，
+# 令勝率有機會系統性偏高。建議將呢份backtest嘅勝率當做「樂觀上限」。
 
 TICKER_GROUPS = {
     "MEGA_CAP (傳統巨無霸與穩健增長)": MEGA_CAP_TICKERS,
-    "HIGH_BETA (高動能與投機性科技股)": HIGH_BETA_TICKERS
+    "HIGH_BETA (高動能與投機性科技股)": HIGH_BETA_TICKERS,
 }
 
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
-# 進場/出場/風控規則
 HOLD_DAYS = 20
 STOP_LOSS_PCT = -0.07
 TARGET_PCT = 0.10
 BREAKEVEN_PCT = 0.05
 
-# ==========================================
-# 第二步：下載大盤數據 (SPY) 作為環境濾網
-# ==========================================
+
 def get_spy_data():
     try:
         spy = yf.download("SPY", start=START_DATE, end=END_DATE, progress=False)
@@ -65,59 +36,16 @@ def get_spy_data():
         print(f"⚠️ SPY數據下載失敗（{e}）")
         return pd.Series(dtype=bool)
 
-# ==========================================
-# 第三步：下載個股歷史數據 + 計算技術指標
-# ==========================================
+
 def prepare_data(ticker):
     df = yf.download(ticker, start=START_DATE, end=END_DATE, progress=False)
     if df.empty or len(df) < 210:
         return None
-
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
+    return compute_indicators(df)  # 改用strategy_core嘅共用function，同main.py保證一致
 
-    df["SMA20"] = df["Close"].rolling(20).mean()
-    df["SMA50"] = df["Close"].rolling(50).mean()
-    df["SMA200"] = df["Close"].rolling(200).mean()
 
-    df["VolAvg20"] = df["Volume"].rolling(20).mean()
-    df["RelVol"] = df["Volume"] / df["VolAvg20"]
-    df["High52w"] = df["Close"].rolling(252).max()
-    df["GapUp"] = df["Open"] > df["Close"].shift(1)
-    df["PctFrom52wHigh"] = (df["Close"] - df["High52w"]) / df["High52w"]
-    df["ChangeFromOpen"] = (df["Close"] - df["Open"]) / df["Open"]
-    df["DailyRet"] = df["Close"] / df["Close"].shift(1) - 1
-
-    return df
-
-# ==========================================
-# 第四步：爆量突破策略條件 (三把高勝率手術刀)
-# ==========================================
-def check_breakout_signal(row, spy_is_bullish):
-    try:
-        daily_range = row["High"] - row["Low"]
-        close_strong = row["Close"] >= row["Low"] + (0.5 * daily_range) if daily_range > 0 else True
-
-        return (
-            spy_is_bullish
-            and row["Close"] > 15
-            and row["Close"] > row["SMA50"]
-            and row["Close"] > row["SMA200"]
-            and row["SMA20"] > row["SMA50"]
-            and row["Close"] < row["SMA50"] * 1.20
-            and row["PctFrom52wHigh"] >= -0.05
-            and bool(row["GapUp"])
-            and row["ChangeFromOpen"] >= 0.02
-            and row["RelVol"] >= 2.5
-            and row["DailyRet"] < 0.10
-            and close_strong
-        )
-    except Exception:
-        return False
-
-# ==========================================
-# 第五步：逐日行走，模擬交易
-# ==========================================
 def simulate_trades(df, ticker, spy_filter):
     trades = []
     i, n = 0, len(df)
@@ -127,7 +55,7 @@ def simulate_trades(df, ticker, spy_filter):
         spy_bullish = spy_filter.get(date_idx, True)
 
         row = df.iloc[i]
-        if check_breakout_signal(row, spy_bullish):
+        if check_breakout_signal(row, spy_bullish):  # 共用function，同main.py保證一致
             entry_price = df["Open"].iloc[i + 1]
             entry_date = df.index[i + 1]
             exit_price, exit_date, exit_reason = None, None, "持有到期"
@@ -166,7 +94,6 @@ def simulate_trades(df, ticker, spy_filter):
                 exit_price, exit_date = df["Close"].iloc[last_j], df.index[last_j]
 
             ret_pct = (exit_price - entry_price) / entry_price
-
             trades.append({
                 "ticker": ticker,
                 "entry_date": entry_date.date(),
@@ -182,9 +109,7 @@ def simulate_trades(df, ticker, spy_filter):
 
     return trades
 
-# ==========================================
-# 第六步：跑晒所有組別，並將總結上下合併寫入同一個 CSV
-# ==========================================
+
 def run_backtest():
     print("正在下載大盤 SPY 數據建立環境濾網...")
     spy_filter = get_spy_data()
@@ -197,7 +122,7 @@ def run_backtest():
         print(f"\n======================================")
         print(f"準備掃描 {group_name} 組別的 {len(tickers)} 隻美股...")
         print(f"======================================")
-        
+
         all_trades = []
         for t in tickers:
             print(f"處理緊 {t}...")
@@ -212,12 +137,14 @@ def run_backtest():
         if not all_trades:
             print(f"\n{group_name} 完全冇觸發任何交易訊號...")
             summary_data = [{"ticker": f"=== {group_name} 回測表現總結 ==="}, {"ticker": "無交易紀錄"}]
-            # 填補缺失嘅 column 防止 concat 報錯
             for d in summary_data:
                 for k in ["entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "exit_reason"]:
-                    if k not in d: d[k] = ""
+                    if k not in d:
+                        d[k] = ""
             all_groups_dataframes.append(pd.DataFrame(summary_data))
-            all_groups_dataframes.append(pd.DataFrame([{"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""} for _ in range(4)]))
+            all_groups_dataframes.append(pd.DataFrame(
+                [{"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""} for _ in range(4)]
+            ))
             continue
 
         result_df = pd.DataFrame(all_trades)
@@ -235,10 +162,7 @@ def run_backtest():
         expectancy = (strict_win_rate / 100 * avg_win) + ((losses / total_trades) * avg_loss) if total_trades > 0 else 0
 
         reason_counts = result_df["exit_reason"].value_counts()
-        reason_lines = [
-            {"ticker": f" {reason}：{count} 次"}
-            for reason, count in reason_counts.items()
-        ]
+        reason_lines = [{"ticker": f" {reason}：{count} 次"} for reason, count in reason_counts.items()]
 
         summary_data = [
             {"ticker": f"=== {group_name} 回測表現總結 ==="},
@@ -254,25 +178,24 @@ def run_backtest():
             {"ticker": ""},
             {"ticker": f"--- {group_name} 詳細交易紀錄 ---"},
         ]
-
-        # 填補缺失嘅 column 防止 concat 報錯
         for d in summary_data:
             for k in ["entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "exit_reason"]:
-                if k not in d: d[k] = ""
+                if k not in d:
+                    d[k] = ""
 
         summary_df = pd.DataFrame(summary_data)
         group_final_df = pd.concat([summary_df, result_df], ignore_index=True)
         all_groups_dataframes.append(group_final_df)
-        
-        # 喺兩個群組之間加 5 行空白，方便 Excel 睇
-        empty_lines = pd.DataFrame([{"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""} for _ in range(5)])
+
+        empty_lines = pd.DataFrame(
+            [{"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""} for _ in range(5)]
+        )
         all_groups_dataframes.append(empty_lines)
 
-    # 最終合併並輸出為原本 GitHub Actions 認得嘅 backtest_results.csv
     final_combined_df = pd.concat(all_groups_dataframes, ignore_index=True)
-    file_name = "backtest_results.csv"
-    final_combined_df.to_csv(file_name, index=False, encoding="utf-8-sig")
-    print(f"\n✅ 雙組別詳細交易紀錄已完美整合並存到 {file_name}")
+    final_combined_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
+    print("\n✅ 雙組別詳細交易紀錄已整合並存到 backtest_results.csv")
+
 
 if __name__ == "__main__":
     run_backtest()

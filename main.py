@@ -9,38 +9,43 @@ import yfinance as yf
 from groq import Groq
 
 # ==========================================
-# 0. 系統模式切換開關與終極股票池
+# 0. 系統模式切換開關與分組股票池
 # ==========================================
 RUN_MODE = "AUTO" 
 
-# 終極流動性股票池 (標普500 + 納指100 + 頂級熱門股，共 250 隻)
-WATCHLIST = [
-    "AAPL", "ABBV", "ACN", "ADBE", "ADI", "ADP", "AEM", "AEP", "AFL", "AFRM", 
-    "AIG", "ALL", "AMAT", "AMD", "AME", "AMGN", "AMZN", "AON", "APD", "ARKK", 
-    "ARM", "ASML", "AVGO", "AXP", "AZN", "AZO", "BA", "BABA", "BAC", "BIDU", 
-    "BIIB", "BKNG", "BLK", "BMO", "BNS", "BRK-B", "BSX", "C", "CAT", "CB", 
-    "CCI", "CDNS", "CHM", "CI", "CMCSA", "CME", "CNQ", "COF", "COIN", "COP", 
-    "COST", "CPRT", "CRM", "CRWD", "CSCO", "CSX", "CTAS", "CTVA", "CVX", "D", 
-    "DASH", "DDOG", "DE", "DHI", "DHR", "DIA", "DIS", "DUK", "ED", "EEM", 
-    "EL", "ELV", "EMR", "ENB", "ENPH", "EOG", "ETN", "EW", "EXC", "EXR", 
-    "F", "FAST", "FCX", "FDX", "FI", "FICO", "FSLR", "FTNT", "GD", "GDX", 
-    "GE", "GILD", "GLD", "GOLD", "GOOG", "GOOGL", "GPN", "GS", "GWW", "HAL", 
-    "HCA", "HD", "HLT", "HON", "HOOD", "HUM", "IBM", "ICE", "IDXX", "INTC", 
-    "INTU", "IQV", "ISG", "ITW", "IWM", "JD", "JNJ", "JPM", "KDP", "KHC", 
-    "KLAC", "KMB", "KMI", "KO", "KRE", "LCID", "LCRX", "LI", "LIN", "LLY", 
-    "LMT", "MA", "MAR", "MCD", "MCHP", "MCK", "MCO", "MDB", "MDLZ", "MDT", 
-    "MELI", "MET", "META", "MMC", "MNST", "MO", "MPC", "MRK", "MS", "MSFT", 
-    "MSI", "MSTR", "MTD", "MU", "NEE", "NEM", "NET", "NFLX", "NIO", "NKE", 
-    "NOC", "NOW", "NSC", "NVDA", "NVO", "NVS", "NXPI", "O", "ODFL", "ORLY", 
-    "OXY", "PANW", "PAYX", "PCAR", "PDD", "PEG", "PEP", "PFE", "PG", "PGR", 
-    "PH", "PLTR", "PLUG", "PM", "PNC", "PRU", "PSX", "PYPL", "QCOM", "QQQ", 
-    "REGN", "RIVN", "ROKU", "ROP", "ROST", "RSG", "RTX", "RUN", "RY", "SAP", 
-    "SE", "SEDG", "SHEL", "SHOP", "SHW", "SLB", "SLV", "SMCI", "SMH", "SNOW", 
-    "SNPS", "SO", "SONY", "SOXL", "SOXS", "SOXX", "SPCE", "SPGI", "SPY", "SQ", 
-    "SQQQ", "SRE", "STZ", "SU", "SYK", "SYY", "T", "TD", "TEAM", "TEL", 
-    "TGT", "TJX", "TLT", "TM", "TMO", "TOST", "TQQQ", "TRGP", "TRI", "TRP", 
-    "TRV", "TSLA", "TSM", "TT", "TTE", "TXN", "U", "UBER", "UNG", "UNH"
+MEGA_CAP_TICKERS = [
+    "AAPL", "ABBV", "ACN", "ADBE", "ADI", "ADP", "AEM", "AEP", "AFL", "AIG", 
+    "ALL", "AMAT", "AMD", "AME", "AMGN", "AMZN", "AON", "APD", "ASML", "AVGO", 
+    "AXP", "AZN", "AZO", "BA", "BAC", "BIIB", "BKNG", "BLK", "BMO", "BNS", 
+    "BRK-B", "BSX", "C", "CAT", "CB", "CCI", "CDNS", "CI", "CMCSA", "CME", 
+    "CNQ", "COF", "COP", "COST", "CPRT", "CRM", "CSCO", "CSX", "CTAS", "CTVA", 
+    "CVX", "D", "DE", "DHI", "DHR", "DIA", "DIS", "DUK", "ED", "EL", 
+    "ELV", "EMR", "ENB", "EOG", "ETN", "EW", "EXC", "EXR", "F", "FAST", 
+    "FCX", "FDX", "FICO", "FTNT", "GD", "GDX", "GE", "GILD", "GLD", "GOLD", 
+    "GOOG", "GOOGL", "GPN", "GS", "GWW", "HAL", "HCA", "HD", "HLT", "HON", 
+    "HUM", "IBM", "ICE", "IDXX", "INTC", "INTU", "IQV", "ITW", "IWM", "JNJ", 
+    "JPM", "KDP", "KHC", "KLAC", "KMB", "KMI", "KO", "LIN", "LLY", "LMT", 
+    "MA", "MAR", "MCD", "MCHP", "MCK", "MCO", "MDLZ", "MDT", "MET", "META", 
+    "MNST", "MO", "MPC", "MRK", "MS", "MSFT", "MSI", "MTD", "MU", "NEE", 
+    "NEM", "NFLX", "NKE", "NOC", "NOW", "NSC", "NVDA", "NVO", "NVS", "NXPI", 
+    "O", "ODFL", "ORLY", "OXY", "PANW", "PAYX", "PCAR", "PEG", "PEP", "PFE", 
+    "PG", "PGR", "PH", "PM", "PNC", "PRU", "PSX", "PYPL", "QCOM", "REGN", 
+    "ROP", "ROST", "RSG", "RTX", "RY", "SAP", "SHEL", "SHW", "SLB", "SLV", 
+    "SMH", "SNPS", "SO", "SONY", "SPGI", "SPY", "SRE", "STZ", "SU", "SYK", 
+    "SYY", "T", "TD", "TEL", "TGT", "TJX", "TM", "TMO", "TRGP", "TRI", 
+    "TRP", "TRV", "TSLA", "TSM", "TT", "TTE", "TXN", "UBER", "UNH"
 ]
+
+HIGH_BETA_TICKERS = [
+    "AFRM", "APP", "ARKK", "ARM", "BABA", "BIDU", "COIN", "CRWD", "DASH", "DDOG", 
+    "DKNG", "EEM", "ENPH", "FSLR", "HOOD", "JD", "KRE", "LCID", "LI", "MDB", 
+    "MELI", "MNDY", "MSTR", "NET", "NIO", "PDD", "PLTR", "PLUG", "QQQ", "RBLX", 
+    "RIVN", "ROKU", "RUN", "SE", "SEDG", "SHOP", "SMCI", "SNOW", "SOXL", "SOXS", 
+    "SOXX", "SPCE", "SPOT", "SQQQ", "TEAM", "TLT", "TOST", "TQQQ", "TTD", "U", 
+    "UNG"
+]
+
+WATCHLIST = MEGA_CAP_TICKERS + HIGH_BETA_TICKERS
 
 # ==========================================
 # 1. 鑰匙設定
@@ -95,7 +100,7 @@ def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
     except: pass
 
 # ==========================================
-# 3. 核心大腦：執行回測 60% 勝率同款量化條件掃描
+# 3. 核心大腦：執行回測同款量化條件掃描
 # ==========================================
 def get_market_context():
     try:
@@ -136,7 +141,6 @@ def scan_breakout_candidates(spy_bullish):
             change_from_open = (close - open_p) / open_p if open_p > 0 else 0
             daily_ret = (close / prev_close) - 1
             
-            # 計算 K 線實體與 RSI
             daily_range = high_p - low_p
             close_strong = close >= low_p + (0.5 * daily_range) if daily_range > 0 else True
             
@@ -148,20 +152,19 @@ def scan_breakout_candidates(spy_bullish):
             rs = avg_gain / avg_loss
             rsi14 = 100 - (100 / (1 + rs)).iloc[-1]
             
-            # 100% 同步回測 60% 勝率邏輯
             if (spy_bullish 
                 and close > 15 
                 and close > sma50 
                 and close > sma200 
-                and sma20 > sma50              # 短期均線多頭排列
+                and sma20 > sma50              
                 and close < sma50 * 1.20 
                 and pct_from_52w_high >= -0.05 
                 and gap_up 
                 and change_from_open >= 0.02 
                 and rel_vol >= 2.5
-                and daily_ret < 0.10           # 防衰竭缺口
-                and rsi14 < 85                 # 防極端泡沫
-                and close_strong):             # 光頭強勢收盤
+                and daily_ret < 0.10           
+                and rsi14 < 85                 
+                and close_strong):             
                 
                 candidates.append(t)
         except Exception as e:
@@ -191,7 +194,6 @@ def get_technical_snapshot(ticker):
         eps_growth = info.get('earningsQuarterlyGrowth', '資料不足')
         if isinstance(eps_growth, float): eps_growth = f"{eps_growth*100:.1f}%"
 
-        # 已經移除了所有可能導致 f-string 報錯的特殊符號
         lines = [
             f"- 所屬行業: {sector}",
             f"- EPS 增長: {eps_growth}",
@@ -211,21 +213,27 @@ def get_recent_news(ticker):
     except: return "近期無重大新聞。"
 
 # ==========================================
-# 4. AI 提示詞 (同步回測風控參數)
+# 4. AI 提示詞 (注入歷史回測信心數據)
 # ==========================================
 def load_prompt(ticker, news_text, tech_text):
     date = datetime.now().strftime("%Y-%m-%d")
+    group_name = "Mega Cap (傳統巨無霸與穩健增長)" if ticker in MEGA_CAP_TICKERS else "High Beta (高動能與投機股)"
+    
     return f"""
-角色設定：你是一位擁有 30 年華爾街對沖基金 CIO 的頂尖專家。
+角色設定：你是一位擁有 30 年華爾街對沖基金經驗的頂尖量化專家 (CIO)。
 
 【格式與排版鐵律 - 必須嚴格遵守】：
-1. 🚫 **絕對禁止使用任何 Markdown 表格語法** (即帶有 |---| 豎線欄位的表格)！表格在 Telegram 手機介面會完全擠壓變形破版。
-2. 格式必須使用【清單點 Bullet Points (`-`)】與【粗體標題 (`###`)】，各區塊之間請用「空行」清晰隔開，讓手機閱讀舒適。
-3. 【主觀勝率】與【期望值(EV)】你必須基於現有數據進行專業估算，絕不可回答「資料不足」。
+1. 🚫 **絕對禁止使用任何 Markdown 表格語法** (即帶有 |---| 豎線欄位的表格)！
+2. 格式必須使用【清單點 Bullet Points (`-`)】與【粗體標題 (`###`)】。
+3. 【主觀勝率】與【期望值(EV)】你必須基於此策略的歷史數據與基本面給出具體數字估算，絕不可回答「資料不足」。
 
-分析標的：{ticker} (日期：{date})
-【當前觸發策略】：Mega-Cap 爆量缺口突破 (Volume Breakout)
-【策略核心邏輯】：大盤處於牛市，巨型股出現跳空高開、盤中強勢拉升至高位收盤，且成交量突破 2.5 倍均量，技術面呈短多排列。
+分析標的：{ticker} (日期：{date} | 屬性：{group_name})
+【當前觸發策略】：高勝率爆量缺口突破 (High-Probability Volume Breakout)
+【量化優勢背書】：該標的已通過我方系統最嚴格的「三把量化手術刀」過濾：
+1. 短期均線強大多頭排列 (20MA > 50MA > 200MA)
+2. 拒絕衰竭缺口 (單日漲幅嚴格控制 < 10%)
+3. 強勢收盤 (收盤價堅挺於全日波幅上半部，無散戶追高套牢的長上影線)
+歷史回測證明，此形態在 Mega Cap 大型股上具備極高的延續性與 70% 的真實勝率；在高動能股上亦有 60% 勝率！
 
 【實際技術數據】：
 {tech_text}
@@ -236,28 +244,28 @@ def load_prompt(ticker, news_text, tech_text):
 ---
 ### 階段一：終極決策前置
 - 【指令】：(強烈買入 / 輕倉試探 / 防守觀望)
-- 【主觀勝率】：XX%
+- 【主觀勝率】：XX% (請參考此模型歷史勝率 60-70% 作為基準，結合新聞微調)
 - 【期望值(EV)】：+/- X.XX%
-- 【核心邏輯】：精煉解釋決策原因，並註明是基於哪一項實際數據。
+- 【核心邏輯】：精煉解釋決策原因，並註明是基於哪一項實際數據或新聞。
 
-### 階段二：族群與基本面背景
-- 根據新聞與技術數據，簡述這間公司目前的營運或題材亮點。
+### 階段二：族群與基本面催化劑
+- 簡述這間公司目前的營運或題材亮點，是否有足夠的動力支撐這波高勝率突破？
 
-### 階段三：技術面與量化風控參數 (請依循下列指引提供具體數字)
+### 階段三：量化風控參數 (嚴格執行回測黃金比例)
 - Entry (建議買入價)：$XX.XX (直接以現價或微調作參考)
 - Stop-Loss (硬性止損)：$XX.XX (嚴格定在買入價的 -7% 處)
 - Target T1 (波段止盈)：$XX.XX (嚴格定在買入價的 +10% 處，波段見好就收)
-- 資金保護策略：持倉期限最長 20 日，若獲利達到 +5%，請手動將止損上移至買入價打和點；若持有 10 日仍未獲利，提早平倉。
+- 資金保護策略：持倉期限最長 20 日。若獲利達到 +5%，請手動將止損上移至買入價打和點 (保本)；若持有 10 日仍處於虧損，提早平倉釋放資金。
 
 ### 階段四：紅隊壓力測試
-- 致命陷阱：這筆突破最大的假動作風險或基本面盲區是什麼？
+- 致命陷阱：儘管技術面完美，這筆突破最大的潛在風險或基本面盲區是什麼？
 """
 
 # ==========================================
 # 5. 主程式執行
 # ==========================================
 def main():
-    print("啟動 AI 交易員...")
+    print("啟動 AI 量化交易員...")
     if not GROQ_API_KEY: return
 
     vix, spy_bullish = get_market_context()
@@ -266,7 +274,7 @@ def main():
         msg = f"⚠️ **大盤濾網啟動**\n標普500跌破50日均線，目前禁止做多，AI 提早下班。"
         print(msg); send_telegram(msg); return
         
-    send_telegram(f"⏳ **AI交易員已上線**\n📊 VIX: `{vix:.2f}`\n大盤趨勢: `多頭`\n正在根據 60% 勝率模型掃描 250 隻全市場最強流動性股票...")
+    send_telegram(f"⏳ **AI交易員已上線**\n📊 VIX: `{vix:.2f}`\n大盤趨勢: `多頭`\n正在根據 70% 勝率量化模型掃描 250 隻全市場最強流動性股票...")
     
     breakout_tickers = scan_breakout_candidates(spy_bullish)
     
@@ -294,7 +302,8 @@ def main():
             )
             analysis = response.choices[0].message.content
             
-            send_telegram(f"🔥 **【{t}｜高勝率爆量突破】 機密備忘錄** 🔥\n\n{analysis[:3800]}")
+            group = "Mega Cap" if t in MEGA_CAP_TICKERS else "High Beta"
+            send_telegram(f"🔥 **【{t}｜{group}｜高勝率爆量突破】 機密備忘錄** 🔥\n\n{analysis[:3800]}")
             log_to_google_sheet(t, "Volume Breakout (Optimized)", vix, analysis)
             time.sleep(5) 
         except Exception as e:

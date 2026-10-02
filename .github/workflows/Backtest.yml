@@ -16,7 +16,7 @@ jobs:
           python-version: "3.10"
 
       - name: 安裝小幫手工具
-        run: pip install yfinance pandas pandas-ta
+        run: pip install yfinance pandas numpy
 
       - name: 跑回測
         run: python backtest_screener.py

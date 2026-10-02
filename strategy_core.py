@@ -86,10 +86,6 @@ def compute_indicators(df):
     # 唔係你平時睇嘅真正intraday session VWAP。真VWAP要用intraday分鐘/tick數據，
     # 而yfinance嘅分鐘線淨係得返近60日歷史，冇辦法回測2年以上，
     # 所以呢度只做參考用，唔好同broker App度嗰個VWAP直接比較。
-    typical_price = (df["High"] + df["Low"] + df["Close"]) / 3
-    vwap_num = (typical_price * df["Volume"]).rolling(20).sum()
-    vwap_den = df["Volume"].rolling(20).sum()
-    df["VWAP_approx"] = vwap_num / vwap_den
 
     return df
 

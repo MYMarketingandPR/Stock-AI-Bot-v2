@@ -143,8 +143,10 @@ def run_backtest():
         print(f"  {t} 觸發咗 {len(trades)} 次訊號")
         all_trades.extend(trades)
 
-    if not all_trades:
-        print("\n完全冇觸發任何交易訊號，可能篩選條件太嚴、股票池太細，或者呢段期間呢啲股都唔啱呢個策略。")
+        if not all_trades:
+        print("\n完全冇觸發任何交易訊號,可能篩選條件太嚴...")
+        # 即使沒有交易，也要生成一個空的 CSV 避免 GitHub Actions 報錯
+        pd.DataFrame(columns=["ticker", "entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "exit_reason"]).to_csv("backtest_results.csv", index=False)
         return
 
     result_df = pd.DataFrame(all_trades)

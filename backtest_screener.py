@@ -18,11 +18,11 @@ TICKERS = [
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
-# 進場/出場/風控規則 (波段優化版)
-HOLD_DAYS = 20         # 延長至 20 個交易日 (給予充足時間發酵)
-STOP_LOSS_PCT = -0.07  # 止損 -7%
-TARGET_PCT = 0.15      # 止盈 +15%
-BREAKEVEN_PCT = 0.08   # 升達 +8% 才啟動保本機制
+# 進場/出場/風控規則 (巨無霸科技股優化版)
+HOLD_DAYS = 20         # 俾足 20 日發酵
+STOP_LOSS_PCT = -0.07  # 止損維持 -7%
+TARGET_PCT = 0.10      # 止盈降至 +10% (提高中標率)
+BREAKEVEN_PCT = 0.05   # 升達 +5% 立即啟動保本，杜絕由贏變輸
 
 # ==========================================
 # 第二步：下載大盤數據 (SPY) 作為環境濾網
@@ -33,7 +33,6 @@ def get_spy_data():
         if isinstance(spy.columns, pd.MultiIndex):
             spy.columns = spy.columns.get_level_values(0)
         spy["SPY_SMA50"] = spy["Close"].rolling(50).mean()
-        # 建立一個 Series，日期對應大盤是否大於 50MA
         return spy["Close"] > spy["SPY_SMA50"]
     except:
         return pd.Series(dtype=bool)
@@ -71,26 +70,26 @@ def prepare_data(ticker):
     return df
 
 # ==========================================
-# 第四步：設定爆量突破策略條件 (收緊爆量要求)
+# 第四步：設定爆量突破策略條件 (微調防追高與爆量要求)
 # ==========================================
 def check_breakout_signal(row, spy_is_bullish):
     try:
         return (
-            spy_is_bullish
+            spy_is_bullish # 大盤濾網：SPY 必須在 50MA 之上
             and row["Close"] > 15
             and row["Close"] > row["SMA50"]
             and row["Close"] > row["SMA200"]
-            and row["Close"] < row["SMA50"] * 1.15  # 新增：防追高濾網 (距離50MA不超過15%)
+            and row["Close"] < row["SMA50"] * 1.20 # 防追高放寬至20%，包容更多強勢股
             and row["PctFrom52wHigh"] >= -0.05
             and bool(row["GapUp"])
             and row["ChangeFromOpen"] >= 0.02
-            and row["RelVol"] >= 3 
+            and row["RelVol"] >= 2.5 # 爆量門檻降回 2.5 倍，增加交易機會
         )
     except Exception:
         return False
 
 # ==========================================
-# 第五步：逐日行走，模擬交易 (加入保本機制)
+# 第五步：逐日行走，模擬交易 (保本機制)
 # ==========================================
 def simulate_trades(df, ticker, spy_filter):
     trades = []
@@ -98,16 +97,14 @@ def simulate_trades(df, ticker, spy_filter):
     
     while i < n - HOLD_DAYS - 1:
         date_idx = df.index[i]
-        # 檢查大盤濾網 (如果當日SPY數據不存在，預設允許)
         spy_bullish = spy_filter.get(date_idx, True) 
         
         row = df.iloc[i]
         if check_breakout_signal(row, spy_bullish):
-            entry_price = df["Open"].iloc[i + 1] # 訊號出現後第二日開盤先入場
+            entry_price = df["Open"].iloc[i + 1] 
             entry_date = df.index[i + 1]
             exit_price, exit_date, exit_reason = None, None, "持有到期"
             
-            # 動態止損變數
             current_stop_price = entry_price * (1 + STOP_LOSS_PCT)
             target_price = entry_price * (1 + TARGET_PCT)
             breakeven_trigger = entry_price * (1 + BREAKEVEN_PCT)
@@ -117,7 +114,7 @@ def simulate_trades(df, ticker, spy_filter):
                 day_high = df["High"].iloc[j]
                 day_low = df["Low"].iloc[j]
                 
-                # 保本機制：如果盤中最高價觸及 +5%，止損上移至買入價 (打和)
+                # 保本機制：如果盤中最高價觸及 +5%，止損上移至買入價
                 if day_high >= breakeven_trigger and current_stop_price < entry_price:
                     current_stop_price = entry_price
                 
@@ -130,7 +127,6 @@ def simulate_trades(df, ticker, spy_filter):
                     break
                 elif stop_hit:
                     exit_price = min(day_open, current_stop_price)
-                    # 判斷是真止損還是保本離場
                     reason_text = "保本離場" if current_stop_price == entry_price else "觸發止損"
                     exit_date, exit_reason = df.index[j], reason_text
                     break
@@ -154,7 +150,7 @@ def simulate_trades(df, ticker, spy_filter):
                 "return_pct": round(float(ret_pct) * 100, 2),
                 "exit_reason": exit_reason,
             })
-            i += HOLD_DAYS # 避免重疊開注
+            i += HOLD_DAYS 
         else:
             i += 1
             
@@ -185,7 +181,7 @@ def run_backtest():
 
     result_df = pd.DataFrame(all_trades)
     win_trades = result_df[result_df["return_pct"] > 0]
-    lose_trades = result_df[result_df["return_pct"] < 0] # 修改：剛好 0% 的保本單不當作輸單
+    lose_trades = result_df[result_df["return_pct"] < 0] 
     
     win_rate = len(win_trades) / len(result_df) * 100
     avg_win = win_trades["return_pct"].mean() if len(win_trades) else 0
@@ -200,7 +196,6 @@ def run_backtest():
     print(f"期望值(每注平均): {expectancy:.2f}%")
     print("==============================")
     
-    # 將整體表現總結寫入 CSV 的頂部
     summary_data = [
         {"ticker": f"--- 回測總結 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
         {"ticker": f"總交易次數: {len(result_df)}", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""},
@@ -209,13 +204,11 @@ def run_backtest():
         {"ticker": f"--- 詳細交易紀錄 ---", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "exit_reason": ""}
     ]
     
-    # 合併總結與詳細紀錄
     summary_df = pd.DataFrame(summary_data)
     final_df = pd.concat([summary_df, result_df], ignore_index=True)
     
-    # 輸出 CSV 時加入 encoding='utf-8-sig'，確保 Excel 開啟時中文字正常顯示
     final_df.to_csv("backtest_results.csv", index=False, encoding='utf-8-sig')
-    print("詳細交易紀錄(附頂部總結)已存到 backtest_results.csv (Excel 亂碼已修復)")
+    print("詳細交易紀錄(附頂部總結)已存到 backtest_results.csv")
 
 if __name__ == "__main__":
     run_backtest()

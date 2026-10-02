@@ -13,7 +13,8 @@ backtest_screener.py
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import pandas_ta as ta
+# 已移除 pandas_ta —— 呢個套件喺PyPI已經唔存在（原repo停止維護），
+# SMA同RSI改用plain pandas手動計，唔再依賴呢個成日出事嘅外部套件
 
 # ---------- 第一步：設定你想測試嘅股票池 ----------
 # 建議先用返你之前分析過嘅 CRWV, MP, IONQ, UUUU, UMAC，睇下呢啲揀法本身有無edge
@@ -36,9 +37,17 @@ def prepare_data(ticker):
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
-    df["SMA50"] = ta.sma(df["Close"], length=50)
-    df["SMA200"] = ta.sma(df["Close"], length=200)
-    df["RSI14"] = ta.rsi(df["Close"], length=14)
+    df["SMA50"] = df["Close"].rolling(50).mean()
+    df["SMA200"] = df["Close"].rolling(200).mean()
+
+    # RSI(14)，用Wilder's smoothing（同大部份平台嘅標準算法一致）
+    delta = df["Close"].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / 14, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / 14, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    df["RSI14"] = 100 - (100 / (1 + rs))
     df["VolAvg20"] = df["Volume"].rolling(20).mean()
     df["RelVol"] = df["Volume"] / df["VolAvg20"]
     df["High52w"] = df["Close"].rolling(252).max()

@@ -3,17 +3,34 @@ import numpy as np
 import yfinance as yf
 
 # ==========================================
-# 第一步：設定你想測試嘅股票池 (57 隻熱門股)
+# 第一步：設定你想測試嘅股票池 (250 隻頂級熱門股)
 # ==========================================
 TICKERS = [
-    "MU", "LITE", "VOO", "GOOG", "SPCX", "TSLA", "AVGO", 
-    "NKE", "QQQ", "GOOGL", "NVDA", "ORCL", "SKHY", "SNDK", 
-    "COHR", "SOXL", "INTC", "ACN", "NBIS", "RKLB", "MRVL", 
-    "BE", "TQQQ", "AAOI", "TLT", "TSM", "MSFT", "MUU", 
-    "AMD", "AAPL", "META", "NFLX", "AMZN", "MSTR", "SNXX", 
-    "CRCL", "MCD", "AXTI", "CBRS", "DELL", "MRNA", "SPY", 
-    "APP", "SNPS", "BABA", "GLW", "QQQM", "SOXS", "SQQQ", 
-    "IBM", "NOK", "SOXX", "PLTR", "ON", "PDD", "TEM", "LITX"
+    "AAPL", "ABBV", "ACN", "ADBE", "ADI", "ADP", "AEM", "AEP", "AFL", "AFRM", 
+    "AIG", "ALL", "AMAT", "AMD", "AME", "AMGN", "AMZN", "AON", "APD", "ARKK", 
+    "ARM", "ASML", "AVGO", "AXP", "AZN", "AZO", "BA", "BABA", "BAC", "BIDU", 
+    "BIIB", "BKNG", "BLK", "BMO", "BNS", "BRK-B", "BSX", "C", "CAT", "CB", 
+    "CCI", "CDNS", "CHM", "CI", "CMCSA", "CME", "CNQ", "COF", "COIN", "COP", 
+    "COST", "CPRT", "CRM", "CRWD", "CSCO", "CSX", "CTAS", "CTVA", "CVX", "D", 
+    "DASH", "DDOG", "DE", "DHI", "DHR", "DIA", "DIS", "DUK", "ED", "EEM", 
+    "EL", "ELV", "EMR", "ENB", "ENPH", "EOG", "ETN", "EW", "EXC", "EXR", 
+    "F", "FAST", "FCX", "FDX", "FI", "FICO", "FSLR", "FTNT", "GD", "GDX", 
+    "GE", "GILD", "GLD", "GOLD", "GOOG", "GOOGL", "GPN", "GS", "GWW", "HAL", 
+    "HCA", "HD", "HLT", "HON", "HOOD", "HUM", "IBM", "ICE", "IDXX", "INTC", 
+    "INTU", "IQV", "ISG", "ITW", "IWM", "JD", "JNJ", "JPM", "KDP", "KHC", 
+    "KLAC", "KMB", "KMI", "KO", "KRE", "LCID", "LCRX", "LI", "LIN", "LLY", 
+    "LMT", "MA", "MAR", "MCD", "MCHP", "MCK", "MCO", "MDB", "MDLZ", "MDT", 
+    "MELI", "MET", "META", "MMC", "MNST", "MO", "MPC", "MRK", "MS", "MSFT", 
+    "MSI", "MSTR", "MTD", "MU", "NEE", "NEM", "NET", "NFLX", "NIO", "NKE", 
+    "NOC", "NOW", "NSC", "NVDA", "NVO", "NVS", "NXPI", "O", "ODFL", "ORLY", 
+    "OXY", "PANW", "PAYX", "PCAR", "PDD", "PEG", "PEP", "PFE", "PG", "PGR", 
+    "PH", "PLTR", "PLUG", "PM", "PNC", "PRU", "PSX", "PYPL", "QCOM", "QQQ", 
+    "REGN", "RIVN", "ROKU", "ROP", "ROST", "RSG", "RTX", "RUN", "RY", "SAP", 
+    "SE", "SEDG", "SHEL", "SHOP", "SHW", "SLB", "SLV", "SMCI", "SMH", "SNOW", 
+    "SNPS", "SO", "SONY", "SOXL", "SOXS", "SOXX", "SPCE", "SPGI", "SPY", "SQ", 
+    "SQQQ", "SRE", "STZ", "SU", "SYK", "SYY", "T", "TD", "TEAM", "TEL", 
+    "TGT", "TJX", "TLT", "TM", "TMO", "TOST", "TQQQ", "TRGP", "TRI", "TRP", 
+    "TRV", "TSLA", "TSM", "TT", "TTE", "TXN", "U", "UBER", "UNG", "UNH"
 ]
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
@@ -84,6 +101,7 @@ def check_breakout_signal(row, spy_is_bullish):
             and bool(row["GapUp"])
             and row["ChangeFromOpen"] >= 0.02
             and row["RelVol"] >= 2.5 
+            and row["RSI14"] < 85 # 放寬至 85，容許強勢超買，只防禦極端泡沫
         )
     except Exception:
         return False
@@ -113,11 +131,13 @@ def simulate_trades(df, ticker, spy_filter):
                 day_open = df["Open"].iloc[j]
                 day_high = df["High"].iloc[j]
                 day_low = df["Low"].iloc[j]
+                day_close = df["Close"].iloc[j]
                 
-                # 保本機制
+                # 1. 保本機制
                 if day_high >= breakeven_trigger and current_stop_price < entry_price:
                     current_stop_price = entry_price
                 
+                # 2. 止損與止盈檢測
                 stop_hit = day_low <= current_stop_price
                 target_hit = day_high >= target_price
                 
@@ -133,6 +153,13 @@ def simulate_trades(df, ticker, spy_filter):
                 elif target_hit:
                     exit_price = target_price
                     exit_date, exit_reason = df.index[j], "觸發止盈"
+                    break
+                
+                # 3. 時間止損微調：持有 10 日後，只有當帳面為「負數(虧損)」時才提早釋放資金
+                days_held = j - i 
+                if days_held == 10 and day_close < entry_price:
+                    exit_price = day_close
+                    exit_date, exit_reason = df.index[j], "時間止損(10日未能獲利)"
                     break
                     
             if exit_price is None:
@@ -164,6 +191,7 @@ def run_backtest():
     spy_filter = get_spy_data()
     
     all_trades = []
+    print(f"準備掃描 {len(TICKERS)} 隻美股...")
     for t in TICKERS:
         print(f"處理緊 {t}...")
         df = prepare_data(t)

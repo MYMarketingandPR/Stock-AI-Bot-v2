@@ -191,13 +191,14 @@ def get_technical_snapshot(ticker):
         eps_growth = info.get('earningsQuarterlyGrowth', '資料不足')
         if isinstance(eps_growth, float): eps_growth = f"{eps_growth*100:.1f}%"
 
+        # 已經移除了所有可能導致 f-string 報錯的特殊符號
         lines = [
             f"- 所屬行業: {sector}",
             f"- EPS 增長: {eps_growth}",
             f"- 現價: ${close.iloc[-1]:.2f} (距52週高位: {(close.iloc[-1]/high52w - 1)*100:.1f}%)",
-            f"- 20日均線: ${sma20:.2f} \vert{} 50日均線: ${sma50:.2f}",
+            f"- 20日均線: ${sma20:.2f} 並且 50日均線: ${sma50:.2f}",
             f"- RSI(14): {rsi:.1f}",
-            f"- 今日成交量 / 20日均量: {vol_ratio:.2f}x (強勢爆量且收盤強勁)"
+            f"- 今日成交量 vs 20日均量: {vol_ratio:.2f}x (強勢爆量且收盤強勁)"
         ]
         return "\n".join(lines)
     except Exception as e:

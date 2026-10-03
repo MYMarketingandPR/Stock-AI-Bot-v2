@@ -12,11 +12,7 @@ from strategy_core import (
     HIGH_BETA_TICKERS
 )
 
-# ==========================================
-# 第一步：股票池與環境設定
-# ==========================================
 WATCHLIST = MEGA_CAP_TICKERS + HIGH_BETA_TICKERS
-
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
@@ -42,9 +38,6 @@ def prepare_data(ticker):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     return compute_indicators(df)
 
-# ==========================================
-# 第二步：三引擎同步模擬交易 (暴利模式 20%止盈)
-# ==========================================
 def simulate_trades(df, ticker, spy_filter):
     trades = []
     i, n = 0, len(df)
@@ -53,16 +46,28 @@ def simulate_trades(df, ticker, spy_filter):
         date_idx = df.index[i]
         spy_bullish = spy_filter.get(date_idx, True)
         row = df.iloc[i]
-        
         df_history_up_to_today = df.iloc[:i+1] 
         
         strategy = None
+        target_pct = 0.10
+        time_stop_d = 15
+        time_stop_tgt = 0.00
+        
         if check_breakout_signal(row, spy_bullish):
             strategy = "Breakout (突破)"
+            target_pct = 0.10
+            time_stop_d = 10
+            time_stop_tgt = 0.03
         elif check_pullback_signal(row, spy_bullish, df_history_up_to_today):
             strategy = "Pullback (回踩)"
+            target_pct = 0.05
+            time_stop_d = 15
+            time_stop_tgt = 0.00
         elif check_dip_buying_signal(row, df_history_up_to_today):
             strategy = "Dip_Buy (撈底)"
+            target_pct = 0.08
+            time_stop_d = 15
+            time_stop_tgt = 0.00
 
         if strategy:
             entry_price = df["Open"].iloc[i + 1]
@@ -73,9 +78,6 @@ def simulate_trades(df, ticker, spy_filter):
             target_price = entry_price * (1 + 0.20)  # 挑戰 20% 止盈
             breakeven_trigger = entry_price * (1 + BREAKEVEN_PCT)
 
-            time_stop_d = 15
-            time_stop_tgt = 0.00 
-
             for j in range(i + 1, min(i + 1 + HOLD_DAYS, n)):
                 day_open = df["Open"].iloc[j]
                 day_high = df["High"].iloc[j]
@@ -83,7 +85,6 @@ def simulate_trades(df, ticker, spy_filter):
                 day_close = df["Close"].iloc[j]
                 
                 trading_days_held = j - (i + 1)
-
                 stop_hit = day_low <= current_stop_price
                 target_hit = day_high >= target_price
 
@@ -117,7 +118,6 @@ def simulate_trades(df, ticker, spy_filter):
 
             ret_pct = (exit_price - entry_price) / entry_price
             holding_days_calendar = (exit_date - entry_date).days
-            
             group_tag = "High Beta" if ticker in HIGH_BETA_TICKERS else "Mega Cap"
 
             trades.append({
@@ -135,12 +135,8 @@ def simulate_trades(df, ticker, spy_filter):
             i += HOLD_DAYS
         else:
             i += 1
-
     return trades
 
-# ==========================================
-# 第三步：跑回測與生成多維度報告 (加入資金複利及年化回報率模擬)
-# ==========================================
 def run_backtest():
     print("正在下載大盤 SPY 數據建立環境濾網...")
     spy_filter = get_spy_data()
@@ -165,26 +161,23 @@ def run_backtest():
 
     result_df = pd.DataFrame(all_trades)
     
-    # 💰 模擬資金曲線
+    # 💰 綜合資金曲線模擬
     result_df['entry_date'] = pd.to_datetime(result_df['entry_date'])
     result_df['exit_date'] = pd.to_datetime(result_df['exit_date'])
     result_df = result_df.sort_values('entry_date').reset_index(drop=True)
     
-    # 🚀 用戶指定參數：起始資金 $80,000，每注 20%
     initial_capital = 80000.0
     current_capital = initial_capital
     position_size_pct = 0.20  
     
     equity_curve = []
     for idx, row in result_df.iterrows():
-        # 每一注的盈虧 = (當前總資金 * 20%) * 該次交易回報率
         trade_profit = (current_capital * position_size_pct) * (row['return_pct'] / 100.0)
         current_capital += trade_profit
         equity_curve.append(current_capital)
         
     result_df['portfolio_balance'] = [round(x, 2) for x in equity_curve]
     
-    # 🚀 計算總回報與年化回報 (CAGR)
     final_capital = current_capital
     total_return_pct = ((final_capital - initial_capital) / initial_capital) * 100
     
@@ -192,26 +185,43 @@ def run_backtest():
     end_dt = result_df['exit_date'].max()
     days_invested = (end_dt - start_dt).days
     years_invested = days_invested / 365.25
-    
-    if years_invested > 0:
-        annualized_return_pct = ((final_capital / initial_capital) ** (1 / years_invested) - 1) * 100
-    else:
-        annualized_return_pct = total_return_pct
+    annualized_return_pct = ((final_capital / initial_capital) ** (1 / years_invested) - 1) * 100 if years_invested > 0 else total_return_pct
+
+    # 📊 各策略獨立複利與表現拆解
+    strat_summary = []
+    for strat in ["Breakout (突破)", "Pullback (回踩)", "Dip_Buy (撈底)"]:
+        strat_df = result_df[result_df["strategy"] == strat].sort_values('entry_date')
+        if len(strat_df) > 0:
+            s_capital = initial_capital
+            for _, r in strat_df.iterrows():
+                s_capital += (s_capital * position_size_pct) * (r['return_pct'] / 100.0)
+            
+            s_wins = len(strat_df[strat_df["return_pct"] > 0])
+            s_losses = len(strat_df[strat_df["return_pct"] < 0])
+            s_total = len(strat_df)
+            s_rate = (s_wins / (s_wins + s_losses)) * 100 if (s_wins + s_losses) > 0 else 0
+            
+            s_avg_win = strat_df[strat_df["return_pct"] > 0]["return_pct"].mean() if s_wins > 0 else 0
+            s_avg_loss = strat_df[strat_df["return_pct"] < 0]["return_pct"].mean() if s_losses > 0 else 0
+            s_net_profit = s_capital - initial_capital
+            
+            strat_summary.append({"ticker": f" {strat}: 淨賺 ${s_net_profit:,.0f} (最終資金 ${s_capital:,.0f}) | 觸發 {s_total}次 | 勝率 {s_rate:.1f}% | 均贏 +{s_avg_win:.2f}% | 均輸 {s_avg_loss:.2f}%"})
+        else:
+            strat_summary.append({"ticker": f" {strat}: 無觸發紀錄"})
 
     total_trades = len(result_df)
     win_trades = result_df[result_df["return_pct"] > 0]
     lose_trades = result_df[result_df["return_pct"] < 0]
-    be_trades = result_df[result_df["return_pct"] == 0]
+    bes = len(result_df[result_df["return_pct"] == 0])
 
-    wins, losses, bes = len(win_trades), len(lose_trades), len(be_trades)
+    wins, losses = len(win_trades), len(lose_trades)
     strict_win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
-    adj_win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
     avg_win = win_trades["return_pct"].mean() if wins > 0 else 0
     avg_loss = lose_trades["return_pct"].mean() if losses > 0 else 0
-    expectancy = (strict_win_rate / 100 * avg_win) + ((losses / total_trades) * avg_loss) if total_trades > 0 else 0
-    avg_holding_days = result_df["holding_days"].mean() if total_trades > 0 else 0
 
-    # 確保日期變回字串方便存入 CSV
+    reason_counts = result_df["exit_reason"].value_counts()
+    reason_lines = [{"ticker": f" {reason}：{count} 次"} for reason, count in reason_counts.items()]
+
     result_df['entry_date'] = result_df['entry_date'].dt.strftime('%Y-%m-%d')
     result_df['exit_date'] = result_df['exit_date'].dt.strftime('%Y-%m-%d')
 
@@ -222,15 +232,16 @@ def run_backtest():
         {"ticker": f"📈 總體回報率 (Total Return)：+{total_return_pct:,.2f}%"},
         {"ticker": f"📈 年化回報率 (CAGR)：+{annualized_return_pct:,.2f}% (歷時 {years_invested:.1f} 年)"},
         {"ticker": ""},
-        {"ticker": f"總交易次數：{total_trades} 次"},
-        {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次"},
-        {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）"},
-        {"ticker": f"平均贏單利潤：+{avg_win:.2f}%"},
-        {"ticker": f"平均輸單虧損：{avg_loss:.2f}%"},
-        {"ticker": f"期望值（每注平均）：{expectancy:.2f}%"},
-        {"ticker": f"平均持股日數：{avg_holding_days:.1f} 日"},
+        {"ticker": "👑 獨立策略表現排行榜 (假設獨立以 $80k 運行)："},
+        *strat_summary,
         {"ticker": ""},
-        {"ticker": f"--- 詳細交易紀錄 (依時間排序，展示資金曲線) ---"},
+        {"ticker": f"總交易次數：{total_trades} 次 | 贏 {wins} 次、輸 {losses} 次、打和 {bes} 次"},
+        {"ticker": f"嚴格勝率：{strict_win_rate:.2f}% | 平均贏單：+{avg_win:.2f}% | 平均輸單：{avg_loss:.2f}%"},
+        {"ticker": ""},
+        {"ticker": "出場原因分布："},
+        *reason_lines,
+        {"ticker": ""},
+        {"ticker": f"--- 詳細交易紀錄 (依時間排序，展示綜合資金曲線) ---"},
     ]
     
     for d in summary_data:
@@ -244,7 +255,7 @@ def run_backtest():
     final_combined_df = final_combined_df[cols]
     
     final_combined_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
-    print(f"\n✅ 資金複利曲線與回報率已整合，最終餘額 ${final_capital:,.2f}。已存到 backtest_results.csv")
+    print(f"\n✅ 資金複利曲線與回報率已整合，已存到 backtest_results.csv")
 
 if __name__ == "__main__":
     run_backtest()

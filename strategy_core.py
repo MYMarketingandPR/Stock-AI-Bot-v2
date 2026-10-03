@@ -1,6 +1,7 @@
 """
 strategy_core.py
-核心量化引擎：結合 Paul Tudor Jones, Mark Minervini 及 Jesse Livermore 法則的終極版本。
+核心量化引擎：結合 Paul Tudor Jones, Mark Minervini 及 Jesse Livermore 法則的終極狙擊手版本。
+包含 Mega Cap (巨無霸) 與 High Beta (高動能妖股) 雙重股票池。
 """
 import numpy as np
 
@@ -36,6 +37,20 @@ MEGA_CAP_TICKERS = [
     "UDR", "UNH", "UNP", "UPS", "USB", "V", "VLO", "VMC", "VTR", "VTRS", 
     "WAB", "WAT", "WBA", "WDC", "WEC", "WELL", "WFC", "WM", "WMT", "WY", 
     "XEL", "XOM", "XYL", "YUM", "ZBH", "ZION"
+]
+
+# 高動能與投機性科技妖股 (101 隻)
+HIGH_BETA_TICKERS = [
+    "AFRM", "APP", "ARKK", "ARM", "BABA", "BIDU", "COIN", "CRWD", "DASH", "DDOG",
+    "DKNG", "EEM", "ENPH", "FSLR", "HOOD", "JD", "KRE", "LCID", "LI", "MDB",
+    "MELI", "MNDY", "MSTR", "NET", "NIO", "PDD", "PLTR", "PLUG", "QQQ", "RBLX",
+    "RIVN", "ROKU", "RUN", "SE", "SEDG", "SHOP", "SMCI", "SNOW", "SOXL", "SOXS",
+    "SOXX", "SPCE", "SPOT", "SQQQ", "TEAM", "TLT", "TOST", "TQQQ", "TTD", "U",
+    "UNG", "UPST", "AI", "IONQ", "CRWV", "RKLB", "OKLO", "SOUN", "BBAI", "RXRX", 
+    "TEM", "ASTS", "JOBY", "ACHR", "SMR", "VST", "CEG", "GEV", "VRT", "IREN", 
+    "CLSK", "MARA", "RIOT", "CVNA", "CELH", "ONON", "DUOL", "RDDT", "CART", "CAVA", 
+    "HIMS", "W", "CHWY", "CRSP", "NVAX", "MRNA", "ZS", "OKTA", "PATH", "GTLB", 
+    "TWLO", "PINS", "SNAP", "TTWO", "GME", "SOFI", "AXON", "APLD", "LUNR", "ETSY", "NBIS"
 ]
 
 def compute_indicators(df):
@@ -100,7 +115,7 @@ def compute_indicators(df):
     return df
 
 # ==========================================
-# 引擎 A：爆量缺口突破 (Breakout) - 穩定 65%+ 勝率印鈔機
+# 引擎 A：爆量缺口突破 (Breakout) - 維持原本的 60%+ 勝率王牌
 # ==========================================
 def check_breakout_signal(row, spy_is_bullish):
     try:

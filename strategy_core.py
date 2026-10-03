@@ -125,7 +125,7 @@ def check_breakout_signal(row, spy_is_bullish):
     except Exception: return False
 
 # ==========================================
-# 引擎 B：強勢回踩 (Pullback) - 均值支撐
+# 引擎 B：強勢回踩 (Pullback) - 均值支撐 (已強化防呆)
 # ==========================================
 def check_pullback_signal(row, spy_is_bullish, df_history):
     try:
@@ -134,23 +134,48 @@ def check_pullback_signal(row, spy_is_bullish, df_history):
         # 1. 大趨勢必須向上
         trend_up = row["SMA50"] > row["SMA200"] and row["Close"] > row["SMA200"]
         
-        # 2. 近期有過強勢爆發 (過去 10 日內最高價曾高於 SMA20唔少)
-        # 用 df_history 的前 10 日切片來判斷
-        # 簡化寫法：股價距離 52 週高位不能太遠 (例如 15% 以內)，代表在高位強勢震盪
+        # 2. 距離 52 週高位不能太遠 (例如 15% 以內)，代表在高位強勢震盪
         near_high = row["PctFrom52wHigh"] >= -0.15
         
         # 3. 縮量回調
         volume_drying = row["RelVol"] < 0.85
         
-        # 4. 精準回踩支撐 (今日最低價跌穿或極接近 SMA20 或 SMA50，但收市企穩其上)
-        touch_sma20 = (row["Low"] <= row["SMA20"] * 1.01) and (row["Close"] > row["SMA20"])
-        touch_sma50 = (row["Low"] <= row["SMA50"] * 1.01) and (row["Close"] > row["SMA50"])
+        # 4. 精準回踩支撐 (今日最低價跌穿或極接近 SMA20/50，但收市企穩其上)
+        touch_sma20 = (row["Low"] <= row["SMA20"] * 1.015) and (row["Close"] > row["SMA20"])
+        touch_sma50 = (row["Low"] <= row["SMA50"] * 1.015) and (row["Close"] > row["SMA50"])
         bounce_support = touch_sma20 or touch_sma50
         
-        # 5. 回調幅度不大 (今日跌幅不能超過 3%)
+        # 5. 🚀 強化K線確認：必須收陽線 (Close > Open) 或者帶長下影線 (拒絕下跌)
+        daily_range = row["High"] - row["Low"]
+        lower_shadow = row["Close"] - row["Low"] if row["Close"] < row["Open"] else row["Open"] - row["Low"]
+        has_lower_shadow = (lower_shadow / daily_range > 0.5) if daily_range > 0 else False
+        bullish_candle = (row["Close"] > row["Open"]) or has_lower_shadow
+        
+        # 6. 回調幅度不大 (今日跌幅不能超過 3%)
         moderate_drop = row["DailyRet"] > -0.03
         
-        return trend_up and near_high and volume_drying and bounce_support and moderate_drop
+        return trend_up and near_high and volume_drying and bounce_support and bullish_candle and moderate_drop
+    except Exception: return False
+
+# ==========================================
+# 引擎 C：極端超賣撈底 (Dip Buying) - 左側均值回歸 (已極度收緊)
+# ==========================================
+def check_dip_buying_signal(row):
+    """注意：撈底策略不強求大盤向好(spy_is_bullish)，因為大盤跌時巨頭最易出現極端錯殺"""
+    try:
+        # 1. 🚀 恐慌性嚴重超賣收緊：跌穿 SMA50 超過 10%，且 RSI 極低 (<25)
+        extreme_oversold = row["PctFromSMA50"] <= -0.10 and row["RSI14"] < 25
+        
+        # 2. 觸及長線生命線 (股價跌至 SMA200 的 3% 範圍內，或者已經跌穿)
+        near_sma200 = row["Low"] <= row["SMA200"] * 1.03
+        
+        # 3. 🚀 恐慌天量收緊：成交量大於 20日均量 2.0 倍
+        capitulation_vol = row["RelVol"] > 2.0
+        
+        # 4. 🚀 資金介入確認：當日必須收陽線 (代表跌到底有極大買盤掃貨推高)
+        buyers_stepped_in = row["Close"] > row["Open"]
+        
+        return extreme_oversold and near_sma200 and capitulation_vol and buyers_stepped_in
     except Exception: return False
 
 # ==========================================

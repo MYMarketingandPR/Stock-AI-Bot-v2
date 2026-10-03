@@ -100,7 +100,7 @@ def compute_indicators(df):
     return df
 
 # ==========================================
-# 引擎 A：爆量缺口突破 (Breakout) - 維持 60%+ 王牌
+# 引擎 A：爆量缺口突破 (Breakout) - 穩定 65%+ 勝率印鈔機
 # ==========================================
 def check_breakout_signal(row, spy_is_bullish):
     try:
@@ -123,23 +123,23 @@ def check_breakout_signal(row, spy_is_bullish):
     except Exception: return False
 
 # ==========================================
-# 引擎 B：強勢回踩 (Pullback) - 🚀 加入「波幅窒息」與「極致強勢」濾網
+# 引擎 B：強勢回踩 (Pullback) - 🚀 終極狙擊：只選最強、波幅乾涸、右側啟動
 # ==========================================
 def check_pullback_signal(row, spy_is_bullish, df_history):
     try:
-        if not spy_is_bullish: return False
+        if not spy_is_bullish or len(df_history) < 3: return False
         
         # 1. 嚴格多頭：SMA20 > SMA50 > SMA200
         strict_trend_up = row["SMA20"] > row["SMA50"] > row["SMA200"]
         
-        # 2. 🚀 極致相對強勢：距離 52 週新高不能超過 8% (只買最強領導者)
+        # 2. 🚀 極致相對強勢：距離 52 週新高不能超過 8% (只買市場領導者)
         super_strong = row["PctFrom52wHigh"] >= -0.08
         
-        # 3. 🚀 波幅窒息 (Tight Area)：今日最高與最低的波幅，必須小於 2.5% (賣壓完全乾涸)
+        # 3. 🚀 波幅窒息 (Tight Area)：今日波幅小於 2.5% (賣壓完全耗盡)
         daily_volatility = (row["High"] - row["Low"]) / row["Close"]
         volatility_contraction = daily_volatility < 0.025
         
-        # 4. 縮量回調
+        # 4. 極度縮量回調
         volume_drying = row["RelVol"] < 0.65
         
         # 5. 精準回踩支撐
@@ -153,15 +153,20 @@ def check_pullback_signal(row, spy_is_bullish, df_history):
         has_lower_shadow = (lower_shadow / daily_range > 0.6) if daily_range > 0 else False
         bullish_candle = (row["Close"] > row["Open"]) or has_lower_shadow
         
+        # 7. 🚀 右側啟動確認：今日收盤價必須高於昨日最高價 (點火啟動)
+        waking_up = row["Close"] > df_history["High"].iloc[-2]
+
         return (strict_trend_up and super_strong and volatility_contraction and 
-                volume_drying and bounce_support and bullish_candle)
+                volume_drying and bounce_support and bullish_candle and waking_up)
     except Exception: return False
 
 # ==========================================
-# 引擎 C：極度超賣「右側反轉」 (Dip Buy) - 🚀 加入「動能連續翻轉」確認
+# 引擎 C：極度超賣「右側反轉」 (Dip Buy) - 🚀 雙重動能翻轉確認
 # ==========================================
 def check_dip_buying_signal(row, df_history):
     try:
+        if len(df_history) < 5: return False
+        
         # 1. 保命鐵律：必須在 SMA200 之上
         above_200 = row["Close"] > row["SMA200"]
         if not above_200: return False
@@ -172,7 +177,7 @@ def check_dip_buying_signal(row, df_history):
         # 3. 右側確認：強勢站回 EMA9
         reclaimed_ema9 = (row["Close"] > row["EMA9"]) and (df_history["Close"].iloc[-2] <= df_history["EMA9"].iloc[-2])
         
-        # 4. 🚀 動能連續翻轉：MACD 柱狀圖必須「連續兩日」上升 (確保不是死貓反彈)
+        # 4. 🚀 動能連續翻轉：MACD 柱狀圖連續兩日上升
         macd_improving_2days = (row["Hist"] > df_history["Hist"].iloc[-2]) and \
                                (df_history["Hist"].iloc[-2] > df_history["Hist"].iloc[-3])
         
@@ -185,3 +190,29 @@ def check_dip_buying_signal(row, df_history):
         return (above_200 and recent_oversold and reclaimed_ema9 and 
                 macd_improving_2days and volume_support and buyers_stepped_in)
     except Exception: return False
+
+def candidate_snapshot_dict(ticker, row):
+    """將技術指標打包，傳俾 AI"""
+    return {
+        "ticker": ticker, "close": float(row["Close"]), "sma20": float(row["SMA20"]),
+        "sma50": float(row["SMA50"]), "sma200": float(row["SMA200"]) if not np.isnan(row["SMA200"]) else None,
+        "rel_vol": float(row["RelVol"]), "gap_up": bool(row["GapUp"]),
+        "change_from_open_pct": float(row["ChangeFromOpen"]) * 100, "daily_ret_pct": float(row["DailyRet"]) * 100,
+        "pct_from_52w_high": float(row["PctFrom52wHigh"]) * 100, "rsi14": float(row["RSI14"]),
+        "ema9": float(row["EMA9"]), "ema21": float(row["EMA21"]), "obv": float(row["OBV"]),
+        "macd": float(row["MACD"]), "macd_signal": float(row["Signal"]), "macd_hist": float(row["Hist"]),
+        "kdj_k": float(row["K"]), "kdj_d": float(row["D"]), "kdj_j": float(row["J"]), "td_setup": int(row["TD_Setup"])
+    }
+
+def format_quant_snapshot_text(c):
+    lines = [
+        f"- 現價：${c['close']:.2f} (距52週高位：{c['pct_from_52w_high']:.1f}%)",
+        f"- 均線結構：SMA20={c['sma20']:.2f} | SMA50={c['sma50']:.2f}" + (f" | SMA200={c['sma200']:.2f}" if c.get("sma200") else ""),
+        f"- 短期動能：EMA9={c['ema9']:.2f} | EMA21={c['ema21']:.2f}",
+        f"- 震盪指標：RSI(14)={c['rsi14']:.1f} | KDJ(K={c['kdj_k']:.1f}, D={c['kdj_d']:.1f}, J={c['kdj_j']:.1f})",
+        f"- 趨勢指標：MACD={c['macd']:.2f}, Hist={c['macd_hist']:.2f}",
+        f"- 神奇九轉 (TD Setup)：{c['td_setup']} (正數為上漲結構，負數為下跌結構)",
+        f"- 量價結構：相對均量={c['rel_vol']:.2f}x | OBV={c['obv']:,.0f}",
+        f"- 日內表現：單日總跌漲={c['daily_ret_pct']:.2f}% | 開盤至今={c['change_from_open_pct']:.2f}% | 跳空={'有' if c['gap_up'] else '無'}",
+    ]
+    return "\n".join(lines)

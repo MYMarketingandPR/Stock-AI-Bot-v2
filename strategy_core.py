@@ -1,6 +1,6 @@
 """
 strategy_core.py
-核心量化引擎：負責計算技術指標，及判斷三大策略（突破、回踩、撈底）嘅觸發條件。
+核心量化引擎：結合 Paul Tudor Jones, Mark Minervini 及 Jesse Livermore 法則的終極版本。
 """
 import numpy as np
 
@@ -123,58 +123,58 @@ def check_breakout_signal(row, spy_is_bullish):
     except Exception: return False
 
 # ==========================================
-# 引擎 B：強勢回踩 (Pullback) - 🚀 狙擊手級別 (追求 60%+ 勝率)
+# 引擎 B：強勢回踩 (Pullback) - Mark Minervini VCP 縮量法則
 # ==========================================
 def check_pullback_signal(row, spy_is_bullish, df_history):
     try:
         if not spy_is_bullish: return False
         
-        # 1. 嚴格多頭排列：絕不買入短線已走弱的股票
+        # 1. 嚴格多頭排列 (Stage 2)：絕不買入短線已走弱的股票
         strict_trend_up = row["SMA20"] > row["SMA50"] > row["SMA200"]
         if not strict_trend_up: return False
         
-        # 2. 健康的 RSI 休整：回踩時 RSI 不應崩盤，必須在 45 到 65 之間
-        healthy_rsi = 45 <= row["RSI14"] <= 65
+        # 2. 健康的 RSI 休整：回踩時 RSI 不應崩盤
+        healthy_rsi = 40 <= row["RSI14"] <= 60
         
-        # 3. 縮量回調：證明沒有主力在拋售
-        volume_drying = row["RelVol"] < 0.85
+        # 3. 🚀 Minervini VCP 縮量：成交量極度萎縮，代表賣壓完全乾涸
+        volume_drying = row["RelVol"] < 0.65
         
         # 4. 精準回踩 SMA20 或 SMA50
-        touch_sma20 = (row["Low"] <= row["SMA20"] * 1.01) and (row["Close"] > row["SMA20"])
-        touch_sma50 = (row["Low"] <= row["SMA50"] * 1.01) and (row["Close"] > row["SMA50"])
+        touch_sma20 = (row["Low"] <= row["SMA20"] * 1.015) and (row["Close"] > row["SMA20"])
+        touch_sma50 = (row["Low"] <= row["SMA50"] * 1.015) and (row["Close"] > row["SMA50"])
         bounce_support = touch_sma20 or touch_sma50
         
-        # 5. MACD 柱狀圖收斂：證明下跌動能正在減弱
-        macd_improving = row["Hist"] > df_history["Hist"].iloc[-2]
-        
-        # 6. K線確認：必須收陽線或帶長下影線
+        # 5. K線確認：必須收陽線或帶極長下影線 (拒絕下跌)
         daily_range = row["High"] - row["Low"]
         lower_shadow = row["Close"] - row["Low"] if row["Close"] < row["Open"] else row["Open"] - row["Low"]
-        has_lower_shadow = (lower_shadow / daily_range > 0.5) if daily_range > 0 else False
+        has_lower_shadow = (lower_shadow / daily_range > 0.6) if daily_range > 0 else False
         bullish_candle = (row["Close"] > row["Open"]) or has_lower_shadow
         
-        return strict_trend_up and healthy_rsi and volume_drying and bounce_support and macd_improving and bullish_candle
+        return strict_trend_up and healthy_rsi and volume_drying and bounce_support and bullish_candle
     except Exception: return False
 
 # ==========================================
-# 引擎 C：極度超賣「右側反轉」 (Dip Buy) - 取代舊的盲目左側接飛刀
+# 引擎 C：極度超賣「右側反轉」 (Reversal) - Jesse Livermore + PTJ 法則
 # ==========================================
 def check_dip_buying_signal(row, df_history):
     try:
-        # 1. 尋找「曾經」的極度恐慌：過去 5 天內，RSI 曾經跌破 30
+        # 1. 🚀 Paul Tudor Jones 鐵律：絕對不能跌穿 200 日線！
+        above_200 = row["Close"] > row["SMA200"]
+        if not above_200: return False
+        
+        # 2. 尋找「曾經」的極度恐慌：過去 5 天內，RSI 曾經跌破 30
         recent_oversold = df_history["RSI14"].iloc[-5:].min() < 30
         
-        # 2. 🚀 趨勢反轉確認 (Golden Rule)：今日收盤價必須強勢站回 EMA9 之上！
-        # 這是短線止跌、多頭反攻的最核心訊號
+        # 3. 🚀 Jesse Livermore 右側確認：今日收盤價必須強勢站回 EMA9 (9日均線) 之上！
         reclaimed_ema9 = (row["Close"] > row["EMA9"]) and (df_history["Close"].iloc[-2] <= df_history["EMA9"].iloc[-2])
         
-        # 3. 底部爆量：證明大機構已經進場接盤
+        # 4. 底部爆量：證明大機構已經進場接盤
         volume_support = row["RelVol"] > 1.2
         
-        # 4. MACD 金叉或柱狀圖開始縮短
-        macd_turning_up = row["Hist"] > df_history["Hist"].iloc[-2]
+        # 5. 當日必須收陽線 (多頭絕對控制)
+        buyers_stepped_in = row["Close"] > row["Open"]
 
-        return recent_oversold and reclaimed_ema9 and volume_support and macd_turning_up
+        return above_200 and recent_oversold and reclaimed_ema9 and volume_support and buyers_stepped_in
     except Exception: return False
 
 def candidate_snapshot_dict(ticker, row):

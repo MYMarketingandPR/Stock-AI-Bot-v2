@@ -18,13 +18,11 @@ WATCHLIST = MEGA_CAP_TICKERS
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
-# 量化風控參數
+# 量化風控參數 (基礎)
 HOLD_DAYS = 20
 STOP_LOSS_PCT = -0.07
 TARGET_PCT = 0.10
 BREAKEVEN_PCT = 0.05
-TIME_STOP_DAYS = 10     # 時間止損日數 (交易日)
-TIME_STOP_TARGET = 0.03 # 時間止損最低要求利潤 (+3%)
 
 def get_spy_data():
     try:
@@ -99,12 +97,20 @@ def simulate_trades(df, ticker, spy_filter):
                     exit_date, exit_reason = df.index[j], "觸發止盈"
                     break
 
-                # 2. 時間止損判斷 (10日未達3%利潤即斬)
-                if trading_days_held == TIME_STOP_DAYS:
+                # 2. 🚀 動態時間止損判斷 (針對不同策略設定不同寬容度)
+                if strategy == "Breakout (突破)":
+                    time_stop_d = 10
+                    time_stop_tgt = 0.03  # 突破要快，10日冇+3%就斬
+                else: 
+                    # Pullback 同 Dip Buy 需要多啲時間築底
+                    time_stop_d = 15
+                    time_stop_tgt = 0.00  # 15日唔蝕錢就可以繼續揸，否則斬
+                    
+                if trading_days_held == time_stop_d:
                     current_return = (day_close - entry_price) / entry_price
-                    if current_return < TIME_STOP_TARGET:
+                    if current_return < time_stop_tgt:
                         exit_price = day_close
-                        exit_date, exit_reason = df.index[j], f"時間止損(未達+{TIME_STOP_TARGET*100:.0f}%)"
+                        exit_date, exit_reason = df.index[j], f"時間止損(未達+{time_stop_tgt*100:.0f}%)"
                         break
 
                 # 3. 保本線上移
@@ -141,7 +147,7 @@ def simulate_trades(df, ticker, spy_filter):
 def run_backtest():
     print("正在下載大盤 SPY 數據建立環境濾網...")
     spy_filter = get_spy_data()
-    if spy_filter.empty: print("⚠️️ 警告：SPY濾網未能建立")
+    if spy_filter.empty: print("⚠️ 警告：SPY濾網未能建立")
 
     print(f"\n======================================")
     print(f"準備掃描 MEGA_CAP 組別的 {len(WATCHLIST)} 隻巨無霸...")
@@ -182,8 +188,10 @@ def run_backtest():
         if len(strat_df) > 0:
             s_wins = len(strat_df[strat_df["return_pct"] > 0])
             s_losses = len(strat_df[strat_df["return_pct"] < 0])
+            s_be = len(strat_df[strat_df["return_pct"] == 0])
+            s_total = len(strat_df)
             s_rate = (s_wins / (s_wins + s_losses)) * 100 if (s_wins + s_losses) > 0 else 0
-            strat_summary.append({"ticker": f" {strat} 觸發 {len(strat_df)} 次，真實勝率 {s_rate:.1f}%"})
+            strat_summary.append({"ticker": f" {strat} 觸發 {s_total} 次 (贏{s_wins}/輸{s_losses}/和{s_be})，真實勝率 {s_rate:.1f}%"})
         else:
             strat_summary.append({"ticker": f" {strat} 無觸發紀錄"})
 
@@ -191,7 +199,7 @@ def run_backtest():
     reason_lines = [{"ticker": f" {reason}：{count} 次"} for reason, count in reason_counts.items()]
 
     summary_data = [
-        {"ticker": f"=== MEGA CAP 全天候三引擎回測總結 ==="},
+        {"ticker": f"=== MEGA CAP 強化三引擎回測總結 ==="},
         {"ticker": f"總交易次數：{total_trades} 次"},
         {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次"},
         {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）"},
@@ -216,7 +224,7 @@ def run_backtest():
     summary_df = pd.DataFrame(summary_data)
     final_combined_df = pd.concat([summary_df, result_df], ignore_index=True)
     final_combined_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
-    print("\n✅ 三引擎詳細交易紀錄已整合並存到 backtest_results.csv")
+    print("\n✅ 三引擎強化詳細交易紀錄已整合並存到 backtest_results.csv")
 
 if __name__ == "__main__":
     run_backtest()

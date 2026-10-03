@@ -219,6 +219,43 @@ def candidate_snapshot_dict(ticker, row):
         "kdj_k": float(row["K"]), "kdj_d": float(row["D"]), "kdj_j": float(row["J"]), "td_setup": int(row["TD_Setup"])
     }
 
+# ==========================================
+# 分級倉位建議 (Tiered Position Sizing) —— main.py(live提示)同backtest_screener.py共用，
+# 避免兩邊各自維護一份又漂移。
+#
+# 依據：2023-01~2026-09 train/validation out-of-sample backtest 顯示——
+#   - Breakout喺訓練/驗證兩期勝率都係三個引擎入面最高、最穩定(46.5%→43.5%)
+#   - Pullback成交量最大，但勝率長期偏弱(~34-36%)
+#   - Dip_Buy喺驗證期明顯轉差(34.5%→27.7%)
+#   - Mega Cap組別驗證期企得住甚至改善(平均回報1.41%→1.94%)
+#   - High Beta組別驗證期崩咗(勝率32.3%→21.2%，平均回報跌到接近0%)
+# 所以用「策略 x 組別」嚟分級注碼，純粹係$80,000入面嘅資金分配差異，
+# 絕對唔涉及槓桿——所有size都仍然喺總資產100%之內。
+# ==========================================
+STRATEGY_SIZE_MULTIPLIER = {
+    "Breakout (突破)": 1.5,    # 兩期勝率最高、最穩定 → 加碼
+    "Dip_Buy (撈底)": 1.0,     # 基準
+    "Pullback (回踩)": 0.75,   # 成交量最大，但勝率/期望值相對較弱 → 減碼
+}
+GROUP_SIZE_MULTIPLIER = {
+    "Mega Cap": 1.0,     # 驗證期企得住甚至改善 → 維持
+    "High Beta": 0.5,    # 驗證期勝率/回報明顯轉差 → 減碼
+}
+BASE_POSITION_SIZE_PCT = 0.10  # 基準單位：Dip_Buy + Mega Cap = 1.0 x 1.0 = 10%
+
+
+def get_tiered_position_size_pct(strategy, group, base=BASE_POSITION_SIZE_PCT,
+                                  min_pct=0.03, max_pct=0.20):
+    """根據策略類型(strategy)同股票組別(group)，計算呢次訊號應該用幾多%資金。
+    例：Breakout+Mega Cap = 10% x 1.5 x 1.0 = 15%；Pullback+High Beta = 10% x 0.75 x 0.5 ≈ 3.75%。
+    純粹資金分配嘅差異，所有size都喺總資產100%之內，唔涉及任何槓桿。
+    main.py(live)同backtest_screener.py應該共用呢個function，先至唔會兩邊數字唔同步。"""
+    s_mult = STRATEGY_SIZE_MULTIPLIER.get(strategy, 1.0)
+    g_mult = GROUP_SIZE_MULTIPLIER.get(group, 1.0)
+    pct = base * s_mult * g_mult
+    return max(min_pct, min(max_pct, pct))
+
+
 def format_quant_snapshot_text(c):
     lines = [
         f"- 現價：${c['close']:.2f} (距52週高位：{c['pct_from_52w_high']:.1f}%)",

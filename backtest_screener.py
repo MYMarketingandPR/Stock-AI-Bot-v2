@@ -9,7 +9,10 @@ from strategy_core import (
     check_pullback_signal,
     check_dip_buying_signal,
     MEGA_CAP_TICKERS,
-    HIGH_BETA_TICKERS
+    HIGH_BETA_TICKERS,
+    get_tiered_position_size_pct,
+    STRATEGY_SIZE_MULTIPLIER,
+    GROUP_SIZE_MULTIPLIER,
 )
 
 # ==========================================
@@ -40,6 +43,11 @@ TRAILING_PULLBACK_PCT = 0.01
 INITIAL_CAPITAL = 80000.0
 # 一次過掃描幾個唔同嘅倉位比例，唔使再逐個改數字、逐次重新部署先知結果
 POSITION_SIZE_SWEEP = [0.05, 0.10, 0.15, 0.20, 0.25]
+
+# 🎯 分級倉位(Tiered Sizing)：Breakout+Mega Cap呢類歷史上較穩陣嘅組合加碼，
+# Pullback+High Beta呢類較弱嘅組合減碼。掃描唔同嘅BASE，揀邊個base令
+# 「分級後」嘅組合喺訓練/驗證兩期都企得住。全部仍然喺$80,000之內，冇槓桿。
+TIER_BASE_SWEEP = [0.05, 0.075, 0.10, 0.125, 0.15, 0.20]
 
 
 def get_spy_data():
@@ -173,7 +181,17 @@ def simulate_portfolio_with_capital_limit(result_df, initial_capital, position_s
     - 唔夠現金 → 呢注直接跳過（唔開倉），絕對唔會透支
     - 持倉中嘅部位，帳面值維持喺「入場時撥款金額」，離場先實現盈虧
       （簡化：唔做持倉期間嘅逐日mark-to-market，呢個唔影響「有冇用盡資金」呢個核心問題）
+
+    position_size_pct 可以係：
+    - 一個固定數字(float)：每注都用同一個%（原本嘅做法）
+    - 一個function(strategy, group) -> pct：分級倉位，根據呢注嘅策略類型/組別
+      決定呢注用幾多%（見strategy_core.get_tiered_position_size_pct）
     """
+    def size_for(idx):
+        if callable(position_size_pct):
+            row = result_df.loc[idx]
+            return position_size_pct(row["strategy"], row["group"])
+        return position_size_pct
     # 同一日有多過一個訊號爭緊同一舊資金時，優先俾返歷史期望值較高嘅引擎，
     # 唔再淨係跟入面原本嘅先後次序（呢個純粹係資金分配優先序，唔改任何訊號判斷邏輯）
     strategy_priority = {"Breakout (突破)": 0, "Dip_Buy (撈底)": 1, "Pullback (回踩)": 2}
@@ -200,7 +218,7 @@ def simulate_portfolio_with_capital_limit(result_df, initial_capital, position_s
                 cash += allocated * (1 + ret_pct / 100.0)
         else:  # 入場：check現金夠唔夠
             total_equity = cash + sum(open_positions.values())
-            desired_size = total_equity * position_size_pct
+            desired_size = total_equity * size_for(idx)
             if desired_size <= cash + 1e-6:
                 cash -= desired_size
                 open_positions[idx] = desired_size
@@ -261,6 +279,63 @@ def sweep_sizes(df_period, initial_capital):
         if best_cagr is None or cagr > best_cagr:
             best_cagr, best_size, best_df = cagr, size, df_sim
     return results, best_size, best_cagr, best_df
+
+
+def sweep_tiered_bases(df_period, initial_capital):
+    """同sweep_sizes一樣嘅掃描邏輯，但每注嘅%唔再係單一數字，而係用
+    strategy_core.get_tiered_position_size_pct 按(策略,組別)分級，掃描唔同嘅base(TIER_BASE_SWEEP)。"""
+    total = len(df_period)
+    if total == 0:
+        return [], None, None, None
+    start_dt, end_dt = df_period["entry_date"].min(), df_period["exit_date"].max()
+    years = (end_dt - start_dt).days / 365.25
+    results, best_base, best_cagr, best_df = [], None, None, None
+    for base in TIER_BASE_SWEEP:
+        size_fn = lambda strat, grp, b=base: get_tiered_position_size_pct(strat, grp, base=b)
+        df_sim, final_cap, skipped, _ = simulate_portfolio_with_capital_limit(df_period.copy(), initial_capital, size_fn)
+        taken = total - skipped
+        cagr = (
+            ((final_cap / initial_capital) ** (1 / years) - 1) * 100
+            if years > 0 else ((final_cap - initial_capital) / initial_capital) * 100
+        )
+        results.append({
+            "size": base, "final_capital": final_cap, "cagr": cagr,
+            "taken": taken, "skipped": skipped, "util_pct": taken / total * 100,
+        })
+        if best_cagr is None or cagr > best_cagr:
+            best_cagr, best_base, best_df = cagr, base, df_sim
+    return results, best_base, best_cagr, best_df
+
+
+def apply_fixed_tiered(df_period, initial_capital, base):
+    """用一個已經揀定嘅tiered base,原汁原味放落呢段期間跑一次(唔再重新揀，避免過擬合)。"""
+    total = len(df_period)
+    if total == 0 or base is None:
+        return None
+    start_dt, end_dt = df_period["entry_date"].min(), df_period["exit_date"].max()
+    years = (end_dt - start_dt).days / 365.25
+    size_fn = lambda strat, grp, b=base: get_tiered_position_size_pct(strat, grp, base=b)
+    df_sim, final_cap, skipped, _ = simulate_portfolio_with_capital_limit(df_period.copy(), initial_capital, size_fn)
+    taken = total - skipped
+    cagr = (
+        ((final_cap / initial_capital) ** (1 / years) - 1) * 100
+        if years > 0 else ((final_cap - initial_capital) / initial_capital) * 100
+    )
+    return {
+        "size": base, "final_capital": final_cap, "cagr": cagr, "taken": taken,
+        "skipped": skipped, "util_pct": taken / total * 100 if total else 0.0,
+        "years": years, "sim_df": df_sim,
+    }
+
+
+def format_tier_table(base):
+    """用某個base，印出每個(策略,組別)組合實際會用幾多%資金——方便之後搬去main.py標注用。"""
+    lines = []
+    for strat, _ in STRATEGY_SIZE_MULTIPLIER.items():
+        for grp, _ in GROUP_SIZE_MULTIPLIER.items():
+            pct = get_tiered_position_size_pct(strat, grp, base=base)
+            lines.append(f"　{strat} x {grp}：{pct*100:.2f}%")
+    return lines
 
 
 def apply_fixed_size(df_period, initial_capital, size):
@@ -335,6 +410,62 @@ def analyze_universe(df_all, label):
     }
 
 
+def analyze_tiered_universe(df_all, label):
+    """同analyze_universe一樣嘅訓練/驗證拆期方法，但用「分級倉位」(tiered sizing)
+    代替單一%嘅position size：Breakout/Dip_Buy/Pullback x Mega Cap/High Beta
+    各自有唔同嘅資金分配比重（見strategy_core.STRATEGY_SIZE_MULTIPLIER/GROUP_SIZE_MULTIPLIER）。
+    淨係掃描個「base」（基準單位%），揀訓練期CAGR最高嗰個base，
+    再原汁原味攞去驗證期做誠實out-of-sample測試——同quantity sizing一樣嘅防過擬合方法。"""
+    train_mask = (df_all["entry_date"] >= pd.Timestamp(TRAIN_START)) & (df_all["entry_date"] <= pd.Timestamp(TRAIN_END))
+    valid_mask = (df_all["entry_date"] >= pd.Timestamp(VALID_START)) & (df_all["entry_date"] <= pd.Timestamp(VALID_END))
+    train_df = df_all[train_mask].reset_index(drop=True)
+    valid_df = df_all[valid_mask].reset_index(drop=True)
+
+    train_theo = theoretical_stats(train_df)
+    valid_theo = theoretical_stats(valid_df)
+
+    train_sweep, train_best_base, train_best_cagr, train_best_df = sweep_tiered_bases(train_df, INITIAL_CAPITAL)
+    valid_oos = apply_fixed_tiered(valid_df, INITIAL_CAPITAL, train_best_base)
+    valid_sweep_ref, valid_own_best_base, valid_own_best_cagr, _ = sweep_tiered_bases(valid_df, INITIAL_CAPITAL)
+
+    lines = [
+        f"=== {label} ===",
+        "分級規則：Breakout x1.5、Dip_Buy x1.0、Pullback x0.75（策略倍數） "
+        "x Mega Cap x1.0、High Beta x0.5（組別倍數），全部仍然喺總資產100%之內，冇槓桿。",
+        f"【訓練期 {TRAIN_START} ~ {TRAIN_END}】訊號 {train_theo['total']} 次，base掃描結果（由細到大）：",
+    ]
+    for r in train_sweep:
+        lines.append(f"　base={r['size']*100:.1f}%：CAGR {r['cagr']:+.2f}%，最終結餘${r['final_capital']:,.2f}，"
+                      f"開倉{r['taken']}/{train_theo['total']}次(使用率{r['util_pct']:.1f}%)")
+    if train_best_base is not None:
+        lines.append(f"👉 訓練期揀出嘅最佳base：{train_best_base*100:.1f}%（CAGR {train_best_cagr:+.2f}%）"
+                      f"——呢個base下，實際每類訊號用嘅%係：")
+        lines += format_tier_table(train_best_base)
+        lines.append("呢個base會攞去驗證期做出樣本外測試")
+    lines.append(f"訓練期理論勝率：{train_theo['strict_wr']:.2f}%（撇除打和後約{train_theo['adj_wr']:.2f}%），期望值{train_theo['expectancy']:.2f}%，平均持股{train_theo['avg_hold']:.1f}日")
+    lines.append("")
+    lines.append(f"【驗證期 {VALID_START} ~ {VALID_END}】訊號 {valid_theo['total']} 次")
+    if valid_oos is not None:
+        lines.append(f"👉 用訓練期揀嘅base {train_best_base*100:.1f}%，喺驗證期（出樣本外）：CAGR {valid_oos['cagr']:+.2f}%，"
+                      f"最終結餘${valid_oos['final_capital']:,.2f}，開倉{valid_oos['taken']}/{valid_theo['total']}次")
+    else:
+        lines.append("⚠️ 驗證期冇足夠交易訊號，未能計算")
+    lines.append(f"驗證期理論勝率：{valid_theo['strict_wr']:.2f}%（撇除打和後約{valid_theo['adj_wr']:.2f}%），期望值{valid_theo['expectancy']:.2f}%，平均持股{valid_theo['avg_hold']:.1f}日")
+    lines.append("")
+    lines.append("--- 參考（唔應該用嚫揀參數！純粹量度過擬合風險）：如果直接用驗證期自己數據揀最啱base ---")
+    for r in valid_sweep_ref:
+        lines.append(f"　base={r['size']*100:.1f}%：CAGR {r['cagr']:+.2f}%")
+    if valid_oos is not None and valid_own_best_cagr is not None:
+        gap = valid_own_best_cagr - valid_oos["cagr"]
+        lines.append(f"（驗證期自選最佳CAGR {valid_own_best_cagr:+.2f}% vs 誠實出樣本外CAGR {valid_oos['cagr']:+.2f}%，"
+                      f"差距{gap:+.2f}個百分點）")
+
+    return {
+        "label": label, "lines": lines,
+        "train_best_base": train_best_base, "train_best_cagr": train_best_cagr, "valid_oos": valid_oos,
+    }
+
+
 def run_backtest():
     print("正在下載大盤 SPY 數據建立環境濾網...")
     spy_filter = get_spy_data()
@@ -363,10 +494,11 @@ def run_backtest():
     result_df["exit_date"] = pd.to_datetime(result_df["exit_date"])
     result_df = result_df.sort_values("entry_date").reset_index(drop=True)
 
-    # --- 用同一批已經跑出嚟嘅trades，分別比較「全部股票池」vs「只用Mega Cap(剔除High Beta)」---
-    full_result = analyze_universe(result_df, "全部股票池 (Mega Cap + High Beta)")
+    # --- 用同一批已經跑出嚟嘅trades，比較三種資金分配方式 ---
+    full_result = analyze_universe(result_df, "全部股票池 (Mega Cap + High Beta)，單一倉位%")
     mega_only_df = result_df[result_df["group"] == "Mega Cap"].reset_index(drop=True)
-    mega_result = analyze_universe(mega_only_df, "只用 Mega Cap (剔除 High Beta)")
+    mega_result = analyze_universe(mega_only_df, "只用 Mega Cap (剔除 High Beta)，單一倉位%")
+    tiered_result = analyze_tiered_universe(result_df, "全部股票池，分級倉位(Breakout/MegaCap加碼，Pullback/HighBeta減碼)")
 
     summary_lines = [
         "=== 回測報告：訓練期揀參數 → 驗證期做Out-of-Sample測試（防過擬合）===",
@@ -376,9 +508,11 @@ def run_backtest():
     summary_lines += full_result["lines"]
     summary_lines += [""]
     summary_lines += mega_result["lines"]
+    summary_lines += [""]
+    summary_lines += tiered_result["lines"]
     summary_lines += [
         "",
-        "--- 詳細交易紀錄（下面全部用「全部股票池」版本；period=訓練/驗證；"
+        "--- 詳細交易紀錄（下面全部用「全部股票池、單一倉位%」版本；period=訓練/驗證；"
         "position_taken=False代表資金不足未開倉；全部用訓練期揀嘅size模擬）---",
     ]
     summary_data = [{"ticker": line} for line in summary_lines]
@@ -419,8 +553,10 @@ def run_backtest():
 
     valid_oos = full_result["valid_oos"]
     valid_cagr_print = f"{valid_oos['cagr']:+.2f}%" if valid_oos is not None else "N/A"
-    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本，加埋Mega-Cap-only對比）。"
-          f"全部股票池：驗證期CAGR {valid_cagr_print}。"
+    tiered_oos = tiered_result["valid_oos"]
+    tiered_cagr_print = f"{tiered_oos['cagr']:+.2f}%" if tiered_oos is not None else "N/A"
+    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本，加埋Mega-Cap-only同分級倉位對比）。"
+          f"全部股票池(單一%)：驗證期CAGR {valid_cagr_print}；分級倉位：驗證期CAGR {tiered_cagr_print}。"
           f"已存到 backtest_results.csv")
 
 

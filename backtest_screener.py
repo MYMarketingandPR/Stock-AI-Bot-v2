@@ -53,13 +53,17 @@ def simulate_trades(df, ticker, spy_filter):
         spy_bullish = spy_filter.get(date_idx, True)
         row = df.iloc[i]
         
-        # 🚦 判斷觸發了哪一個引擎
+# 🚦 判斷觸發了哪一個引擎
         strategy = None
+        
+        # 將截至當日為止嘅歷史數據切片傳入去
+        df_history_up_to_today = df.iloc[:i+1] 
+        
         if check_breakout_signal(row, spy_bullish):
             strategy = "Breakout (突破)"
-        elif check_pullback_signal(row, spy_bullish, df):
+        elif check_pullback_signal(row, spy_bullish, df_history_up_to_today):
             strategy = "Pullback (回踩)"
-        elif check_dip_buying_signal(row):
+        elif check_dip_buying_signal(row, df_history_up_to_today):
             strategy = "Dip_Buy (撈底)"
 
         if strategy:

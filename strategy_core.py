@@ -245,7 +245,7 @@ BASE_POSITION_SIZE_PCT = 0.10  # 基準單位：Dip_Buy + Mega Cap = 1.0 x 1.0 =
 
 
 def get_tiered_position_size_pct(strategy, group, base=BASE_POSITION_SIZE_PCT,
-                                  min_pct=0.03, max_pct=0.20):
+                                  min_pct=0.03, max_pct=0.35):
     """根據策略類型(strategy)同股票組別(group)，計算呢次訊號應該用幾多%資金。
     例：Breakout+Mega Cap = 10% x 1.5 x 1.0 = 15%；Pullback+High Beta = 10% x 0.75 x 0.5 ≈ 3.75%。
     純粹資金分配嘅差異，所有size都喺總資產100%之內，唔涉及任何槓桿。

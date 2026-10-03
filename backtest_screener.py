@@ -47,7 +47,9 @@ POSITION_SIZE_SWEEP = [0.05, 0.10, 0.15, 0.20, 0.25]
 # 🎯 分級倉位(Tiered Sizing)：Breakout+Mega Cap呢類歷史上較穩陣嘅組合加碼，
 # Pullback+High Beta呢類較弱嘅組合減碼。掃描唔同嘅BASE，揀邊個base令
 # 「分級後」嘅組合喺訓練/驗證兩期都企得住。全部仍然喺$80,000之內，冇槓桿。
-TIER_BASE_SWEEP = [0.05, 0.075, 0.10, 0.125, 0.15, 0.20]
+# （max_pct封頂已經由20%放寬到35%——見strategy_core.get_tiered_position_size_pct——
+#   等base去到20%+嗰陣，Breakout呢類高倍數組合先至唔會未夠高就被封頂、失去分級效果）
+TIER_BASE_SWEEP = [0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.25]
 
 
 def get_spy_data():
@@ -494,11 +496,14 @@ def run_backtest():
     result_df["exit_date"] = pd.to_datetime(result_df["exit_date"])
     result_df = result_df.sort_values("entry_date").reset_index(drop=True)
 
-    # --- 用同一批已經跑出嚟嘅trades，比較三種資金分配方式 ---
+    # --- 用同一批已經跑出嚟嘅trades，比較四種資金分配方式 ---
     full_result = analyze_universe(result_df, "全部股票池 (Mega Cap + High Beta)，單一倉位%")
     mega_only_df = result_df[result_df["group"] == "Mega Cap"].reset_index(drop=True)
     mega_result = analyze_universe(mega_only_df, "只用 Mega Cap (剔除 High Beta)，單一倉位%")
     tiered_result = analyze_tiered_universe(result_df, "全部股票池，分級倉位(Breakout/MegaCap加碼，Pullback/HighBeta減碼)")
+    mega_tiered_result = analyze_tiered_universe(
+        mega_only_df, "只用 Mega Cap，按策略類型分級(Breakout加碼、Pullback減碼，Mega Cap入面冇High Beta所以組別倍數都係1.0)"
+    )
 
     summary_lines = [
         "=== 回測報告：訓練期揀參數 → 驗證期做Out-of-Sample測試（防過擬合）===",
@@ -510,6 +515,8 @@ def run_backtest():
     summary_lines += mega_result["lines"]
     summary_lines += [""]
     summary_lines += tiered_result["lines"]
+    summary_lines += [""]
+    summary_lines += mega_tiered_result["lines"]
     summary_lines += [
         "",
         "--- 詳細交易紀錄（下面全部用「全部股票池、單一倉位%」版本；period=訓練/驗證；"
@@ -553,10 +560,15 @@ def run_backtest():
 
     valid_oos = full_result["valid_oos"]
     valid_cagr_print = f"{valid_oos['cagr']:+.2f}%" if valid_oos is not None else "N/A"
+    mega_oos = mega_result["valid_oos"]
+    mega_cagr_print = f"{mega_oos['cagr']:+.2f}%" if mega_oos is not None else "N/A"
     tiered_oos = tiered_result["valid_oos"]
     tiered_cagr_print = f"{tiered_oos['cagr']:+.2f}%" if tiered_oos is not None else "N/A"
-    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本，加埋Mega-Cap-only同分級倉位對比）。"
-          f"全部股票池(單一%)：驗證期CAGR {valid_cagr_print}；分級倉位：驗證期CAGR {tiered_cagr_print}。"
+    mega_tiered_oos = mega_tiered_result["valid_oos"]
+    mega_tiered_cagr_print = f"{mega_tiered_oos['cagr']:+.2f}%" if mega_tiered_oos is not None else "N/A"
+    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本，四種資金分配方式對比）。"
+          f"全部股票池(單一%)：{valid_cagr_print}；Mega-Cap-only(單一%)：{mega_cagr_print}；"
+          f"全部股票池(分級)：{tiered_cagr_print}；Mega-Cap-only(分級)：{mega_tiered_cagr_print}。"
           f"已存到 backtest_results.csv")
 
 

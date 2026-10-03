@@ -149,11 +149,17 @@ def simulate_portfolio_with_capital_limit(result_df, initial_capital, position_s
     - 持倉中嘅部位，帳面值維持喺「入場時撥款金額」，離場先實現盈虧
       （簡化：唔做持倉期間嘅逐日mark-to-market，呢個唔影響「有冇用盡資金」呢個核心問題）
     """
+    # 同一日有多過一個訊號爭緊同一舊資金時，優先俾返歷史期望值較高嘅引擎，
+    # 唔再淨係跟入面原本嘅先後次序（呢個純粹係資金分配優先序，唔改任何訊號判斷邏輯）
+    strategy_priority = {"Breakout (突破)": 0, "Dip_Buy (撈底)": 1, "Pullback (回踩)": 2}
+
     events = []
     for idx, row in result_df.iterrows():
-        events.append((row["entry_date"], 1, idx))  # 1=entry
-        events.append((row["exit_date"], 0, idx))   # 0=exit，同日排喺entry之前
-    events.sort(key=lambda e: (e[0], e[1]))
+        prio = strategy_priority.get(row.get("strategy"), 99)
+        events.append((row["entry_date"], 1, prio, idx))  # 1=entry
+        events.append((row["exit_date"], 0, -1, idx))      # 0=exit，同日排喺entry之前
+    events.sort(key=lambda e: (e[0], e[1], e[2]))
+    events = [(d, t, idx) for d, t, _, idx in events]
 
     cash = initial_capital
     open_positions = {}  # idx -> 撥款金額

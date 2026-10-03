@@ -116,8 +116,11 @@ def compute_indicators(df):
 
 # ==========================================
 # 引擎 A：爆量缺口突破 (Breakout) - 維持原本的 60%+ 勝率王牌
+# 🧪 relvol_min開放做參數：現時default=2.5(今日成交量要夠20日均量2.5倍先算「爆量」)，
+#    呢個引擎樣本好少(全期得70幾次訊號)但質素最好(勝率44-46%、最穩定)，
+#    想試吓放寬呢個門檻會唔會攞到更多高質素訊號(換取樣本量)而唔犧牲勝率。
 # ==========================================
-def check_breakout_signal(row, spy_is_bullish):
+def check_breakout_signal(row, spy_is_bullish, relvol_min=2.5):
     try:
         daily_range = row["High"] - row["Low"]
         close_strong = row["Close"] >= row["Low"] + (0.5 * daily_range) if daily_range > 0 else True
@@ -130,7 +133,7 @@ def check_breakout_signal(row, spy_is_bullish):
             and row["PctFrom52wHigh"] >= -0.05
             and bool(row["GapUp"])
             and row["ChangeFromOpen"] >= 0.02
-            and row["RelVol"] >= 2.5
+            and row["RelVol"] >= relvol_min
             and row["DailyRet"] < 0.10
             and row["RSI14"] < 85
             and close_strong
@@ -191,17 +194,20 @@ def check_pullback_signal(row, spy_is_bullish, df_history,
 
 # ==========================================
 # 引擎 C：極度超賣「右側反轉」 (Dip Buy) - 🚀 雙重動能翻轉確認
+# 🧪 rsi_oversold_max開放做參數：現時default=30(過去5日內RSI要跌穿30先算「極度恐慌」)，
+#    數字愈細代表要求愈深嫁超賣先啱資格。Dip_Buy喺剔除咗High Beta之後而家質素幾穩
+#    (Mega Cap：40%→36.1%勝率，平均回報仲升到+3.55%)，想試吓收緊/放寬呢個門檻有冇進一步幫助。
 # ==========================================
-def check_dip_buying_signal(row, df_history):
+def check_dip_buying_signal(row, df_history, rsi_oversold_max=30):
     try:
         if len(df_history) < 5: return False
-        
+
         # 1. 保命鐵律：必須在 SMA200 之上
         above_200 = row["Close"] > row["SMA200"]
         if not above_200: return False
-        
-        # 2. 曾經極度恐慌 (過去 5 日內 RSI < 30)
-        recent_oversold = df_history["RSI14"].iloc[-5:].min() < 30
+
+        # 2. 曾經極度恐慌 (過去 5 日內 RSI < X)
+        recent_oversold = df_history["RSI14"].iloc[-5:].min() < rsi_oversold_max
         
         # 3. 右側確認：強勢站回 EMA9
         reclaimed_ema9 = (row["Close"] > row["EMA9"]) and (df_history["Close"].iloc[-2] <= df_history["EMA9"].iloc[-2])

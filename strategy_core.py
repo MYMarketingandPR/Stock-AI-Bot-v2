@@ -125,57 +125,53 @@ def check_breakout_signal(row, spy_is_bullish):
     except Exception: return False
 
 # ==========================================
-# 引擎 B：強勢回踩 (Pullback) - 均值支撐 (已強化防呆)
+# 引擎 B：強勢回踩 (Pullback) - 狙擊手級別 (追求 60%+ 勝率)
 # ==========================================
 def check_pullback_signal(row, spy_is_bullish, df_history):
     try:
         if not spy_is_bullish: return False
         
-        # 1. 大趨勢必須向上
-        trend_up = row["SMA50"] > row["SMA200"] and row["Close"] > row["SMA200"]
+        # 1. 🚀 嚴格多頭排列：絕不買入短線已走弱的股票
+        strict_trend_up = row["SMA20"] > row["SMA50"] > row["SMA200"]
+        if not strict_trend_up: return False
         
-        # 2. 距離 52 週高位不能太遠 (例如 15% 以內)，代表在高位強勢震盪
-        near_high = row["PctFrom52wHigh"] >= -0.15
+        # 2. 🚀 健康的 RSI 休整：回踩時 RSI 不應崩盤，必須在 45 到 65 之間
+        healthy_rsi = 45 <= row["RSI14"] <= 65
         
-        # 3. 縮量回調
-        volume_drying = row["RelVol"] < 0.85
+        # 3. 縮量回調：證明沒有主力在拋售
+        volume_drying = row["RelVol"] < 0.80
         
-        # 4. 精準回踩支撐 (今日最低價跌穿或極接近 SMA20/50，但收市企穩其上)
-        touch_sma20 = (row["Low"] <= row["SMA20"] * 1.015) and (row["Close"] > row["SMA20"])
-        touch_sma50 = (row["Low"] <= row["SMA50"] * 1.015) and (row["Close"] > row["SMA50"])
+        # 4. 精準回踩 SMA20 或 SMA50，且強勢反彈
+        touch_sma20 = (row["Low"] <= row["SMA20"] * 1.01) and (row["Close"] > row["SMA20"])
+        touch_sma50 = (row["Low"] <= row["SMA50"] * 1.01) and (row["Close"] > row["SMA50"])
         bounce_support = touch_sma20 or touch_sma50
         
-        # 5. 🚀 強化K線確認：必須收陽線 (Close > Open) 或者帶長下影線 (拒絕下跌)
-        daily_range = row["High"] - row["Low"]
-        lower_shadow = row["Close"] - row["Low"] if row["Close"] < row["Open"] else row["Open"] - row["Low"]
-        has_lower_shadow = (lower_shadow / daily_range > 0.5) if daily_range > 0 else False
-        bullish_candle = (row["Close"] > row["Open"]) or has_lower_shadow
+        # 5. MACD 柱狀圖收斂：證明下跌動能正在減弱 (Hist 雖然是負數，但比昨天高)
+        macd_improving = row["Hist"] > df_history["Hist"].iloc[-2]
         
-        # 6. 回調幅度不大 (今日跌幅不能超過 3%)
-        moderate_drop = row["DailyRet"] > -0.03
-        
-        return trend_up and near_high and volume_drying and bounce_support and bullish_candle and moderate_drop
+        return strict_trend_up and healthy_rsi and volume_drying and bounce_support and macd_improving
     except Exception: return False
 
 # ==========================================
-# 引擎 C：極端超賣撈底 (Dip Buying) - 左側均值回歸 (已極度收緊)
+# 引擎 C：極度超賣「右側反轉」 (Reversal) - 取代舊的盲目撈底
 # ==========================================
-def check_dip_buying_signal(row):
-    """注意：撈底策略不強求大盤向好(spy_is_bullish)，因為大盤跌時巨頭最易出現極端錯殺"""
+def check_dip_buying_signal(row, df_history):
+    """將左側接飛刀，改為右側確認反轉，大幅提升勝率"""
     try:
-        # 1. 🚀 恐慌性嚴重超賣收緊：跌穿 SMA50 超過 10%，且 RSI 極低 (<25)
-        extreme_oversold = row["PctFromSMA50"] <= -0.10 and row["RSI14"] < 25
+        # 1. 尋找「曾經」的極度恐慌：過去 5 天內，RSI 曾經跌破 30
+        recent_oversold = df_history["RSI14"].iloc[-5:].min() < 30
         
-        # 2. 觸及長線生命線 (股價跌至 SMA200 的 3% 範圍內，或者已經跌穿)
-        near_sma200 = row["Low"] <= row["SMA200"] * 1.03
+        # 2. 🚀 趨勢反轉確認 (Golden Rule)：今日收盤價必須強勢站回 EMA9 之上！
+        # 這是短線止跌、多頭反攻的最核心訊號
+        reclaimed_ema9 = row["Close"] > row["EMA9"] and df_history["Close"].iloc[-2] <= df_history["EMA9"].iloc[-2]
         
-        # 3. 🚀 恐慌天量收緊：成交量大於 20日均量 2.0 倍
-        capitulation_vol = row["RelVol"] > 2.0
+        # 3. 底部爆量：證明大機構已經進場接盤
+        volume_support = row["RelVol"] > 1.2
         
-        # 4. 🚀 資金介入確認：當日必須收陽線 (代表跌到底有極大買盤掃貨推高)
-        buyers_stepped_in = row["Close"] > row["Open"]
-        
-        return extreme_oversold and near_sma200 and capitulation_vol and buyers_stepped_in
+        # 4. MACD 金叉或即將金叉
+        macd_turning_up = row["Hist"] > df_history["Hist"].iloc[-2]
+
+        return recent_oversold and reclaimed_ema9 and volume_support and macd_turning_up
     except Exception: return False
 
 # ==========================================

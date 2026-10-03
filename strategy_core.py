@@ -1,15 +1,10 @@
 """
 strategy_core.py
-main.py（live下單）同backtest_screener.py（歷史回測）共用嘅訊號邏輯。
-日後要改策略條件，淨係需要改呢個檔案一個地方，兩邊會自動同步，
-唔會再出現「live有RSI<85但backtest冇」呢類漂移。
+核心量化引擎：負責計算技術指標，及判斷三大策略（突破、回踩、撈底）嘅觸發條件。
 """
 import numpy as np
 
-# ==========================================
-# 共用股票池 —— main.py同backtest_screener.py都應該喺呢度import，
-# 唔好再各自維護一份，否則好快又會漂移（好似之前RSI<85果次）
-# ==========================================
+# 擴充版 MEGA_CAP_TICKERS (近 300 隻核心藍籌與高流動性巨無霸)
 MEGA_CAP_TICKERS = [
     "AAPL", "ABBV", "ABT", "ACN", "ADBE", "ADI", "ADP", "AEE", "AEM", "AEP", 
     "AFL", "AIG", "ALL", "AMAT", "AMD", "AME", "AMGN", "AMZN", "AON", "APD", 
@@ -43,74 +38,80 @@ MEGA_CAP_TICKERS = [
     "XEL", "XOM", "XYL", "YUM", "ZBH", "ZION"
 ]
 
-HIGH_BETA_TICKERS = [
-    # 原有50隻
-    "AFRM", "APP", "ARKK", "ARM", "BABA", "BIDU", "COIN", "CRWD", "DASH", "DDOG",
-    "DKNG", "EEM", "ENPH", "FSLR", "HOOD", "JD", "KRE", "LCID", "LI", "MDB",
-    "MELI", "MNDY", "MSTR", "NET", "NIO", "PDD", "PLTR", "PLUG", "QQQ", "RBLX",
-    "RIVN", "ROKU", "RUN", "SE", "SEDG", "SHOP", "SMCI", "SNOW", "SOXL", "SOXS",
-    "SOXX", "SPCE", "SPOT", "SQQQ", "TEAM", "TLT", "TOST", "TQQQ", "TTD", "U",
-    "UNG",
-    # 新增50隻，擴大High Beta組別樣本量
-    "UPST", "AI", "IONQ", "CRWV", "RKLB", "OKLO", "SOUN", "BBAI", "RXRX", "TEM",
-    "ASTS", "JOBY", "ACHR", "SMR", "VST", "CEG", "GEV", "VRT",
-    "IREN", "CLSK", "MARA", "RIOT",
-    "CVNA", "CELH", "ONON", "DUOL", "RDDT", "CART", "CAVA", "HIMS", "W", "CHWY",
-    "CRSP", "NVAX", "MRNA",
-    "ZS", "OKTA", "PATH", "GTLB", "TWLO",
-    "PINS", "SNAP", "TTWO", "GME",
-    "SOFI", "AXON", "APLD", "LUNR", "ETSY", "NBIS"
-]
-
-
 def compute_indicators(df):
-    """喺一個OHLCV dataframe上面加返策略要用嘅所有技術指標欄位。
-    df必須有 Open/High/Low/Close/Volume 欄位（index為日期）。"""
+    """計算所有核心技術指標、MACD、KDJ 及 神奇九轉"""
     df = df.copy()
+    
+    # 基礎均線與量價
     df["SMA20"] = df["Close"].rolling(20).mean()
     df["SMA50"] = df["Close"].rolling(50).mean()
     df["SMA200"] = df["Close"].rolling(200).mean()
+    df["EMA9"] = df["Close"].ewm(span=9, adjust=False).mean()
+    df["EMA21"] = df["Close"].ewm(span=21, adjust=False).mean()
+    
     df["VolAvg20"] = df["Volume"].rolling(20).mean()
     df["RelVol"] = df["Volume"] / df["VolAvg20"]
+    df["OBV"] = (np.sign(df["Close"].diff()) * df["Volume"]).fillna(0).cumsum()
+    
+    # 形態與乖離
     df["High52w"] = df["Close"].rolling(252).max()
+    df["High20d"] = df["High"].rolling(20).max()
     df["GapUp"] = df["Open"] > df["Close"].shift(1)
     df["PctFrom52wHigh"] = (df["Close"] - df["High52w"]) / df["High52w"]
+    df["PctFromSMA50"] = (df["Close"] - df["SMA50"]) / df["SMA50"]
     df["ChangeFromOpen"] = (df["Close"] - df["Open"]) / df["Open"]
     df["DailyRet"] = df["Close"] / df["Close"].shift(1) - 1
 
-    # RSI(14)，Wilder's smoothing（同大部份平台標準算法一致）
+    # RSI(14)
     delta = df["Close"].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / 14, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / 14, adjust=False).mean()
-    rs = avg_gain / avg_loss
+    rs = gain.ewm(alpha=1 / 14, adjust=False).mean() / loss.ewm(alpha=1 / 14, adjust=False).mean()
     df["RSI14"] = 100 - (100 / (1 + rs))
 
-    # 你而家主力用緊嘅 EMA9 / EMA21 / OBV
-    df["EMA9"] = df["Close"].ewm(span=9, adjust=False).mean()
-    df["EMA21"] = df["Close"].ewm(span=21, adjust=False).mean()
-    df["OBV"] = (np.sign(df["Close"].diff()) * df["Volume"]).fillna(0).cumsum()
-
-    # ⚠️ VWAP：呢度係用daily bar做嘅「近似值」（Typical Price按量加權20日），
-    # 唔係你平時睇嘅真正intraday session VWAP。真VWAP要用intraday分鐘/tick數據，
-    # 而yfinance嘅分鐘線淨係得返近60日歷史，冇辦法回測2年以上，
-    # 所以呢度只做參考用，唔好同broker App度嗰個VWAP直接比較。
-
+    # MACD
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['Hist'] = df['MACD'] - df['Signal']
+    
+    # KDJ (9,3,3)
+    low_min = df['Low'].rolling(window=9).min()
+    high_max = df['High'].rolling(window=9).max()
+    df['RSV'] = 100 * ((df['Close'] - low_min) / (high_max - low_min))
+    df['K'] = df['RSV'].ewm(com=2, adjust=False).mean()
+    df['D'] = df['K'].ewm(com=2, adjust=False).mean()
+    df['J'] = 3 * df['K'] - 2 * df['D']
+    
+    # 神奇九轉 (TD Setup) - 下跌結構(Buy Setup) 預設為負數, 上漲結構(Sell Setup) 預設為正數
+    df['TD_Setup'] = 0
+    setup_up, setup_down = 0, 0
+    for i in range(4, len(df)):
+        if df['Close'].iloc[i] > df['Close'].iloc[i-4]:
+            setup_up += 1
+            setup_down = 0
+            df.iloc[i, df.columns.get_loc('TD_Setup')] = setup_up if setup_up <= 9 else 9
+        elif df['Close'].iloc[i] < df['Close'].iloc[i-4]:
+            setup_down -= 1
+            setup_up = 0
+            df.iloc[i, df.columns.get_loc('TD_Setup')] = setup_down if setup_down >= -9 else -9
+        else:
+            setup_up, setup_down = 0, 0
+            
     return df
 
-
+# ==========================================
+# 引擎 A：爆量缺口突破 (Breakout) - 右側趨勢
+# ==========================================
 def check_breakout_signal(row, spy_is_bullish):
-    """爆量突破策略嘅訊號判斷 —— main.py同backtest_screener.py都call呢個同一個function。"""
     try:
         daily_range = row["High"] - row["Low"]
         close_strong = row["Close"] >= row["Low"] + (0.5 * daily_range) if daily_range > 0 else True
-
         return (
             spy_is_bullish
             and row["Close"] > 15
-            and row["Close"] > row["SMA50"]
-            and row["Close"] > row["SMA200"]
+            and row["Close"] > row["SMA50"] > row["SMA200"]
             and row["SMA20"] > row["SMA50"]
             and row["Close"] < row["SMA50"] * 1.20
             and row["PctFrom52wHigh"] >= -0.05
@@ -118,47 +119,85 @@ def check_breakout_signal(row, spy_is_bullish):
             and row["ChangeFromOpen"] >= 0.02
             and row["RelVol"] >= 2.5
             and row["DailyRet"] < 0.10
-            and row["RSI14"] < 85  # 原本只喺main.py live有，而家兩邊同步咗
+            and row["RSI14"] < 85
             and close_strong
         )
-    except Exception:
-        return False
+    except Exception: return False
 
+# ==========================================
+# 引擎 B：強勢回踩 (Pullback) - 均值支撐
+# ==========================================
+def check_pullback_signal(row, spy_is_bullish, df_history):
+    try:
+        if not spy_is_bullish: return False
+        
+        # 1. 大趨勢必須向上
+        trend_up = row["SMA50"] > row["SMA200"] and row["Close"] > row["SMA200"]
+        
+        # 2. 近期有過強勢爆發 (過去 10 日內最高價曾高於 SMA20唔少)
+        # 用 df_history 的前 10 日切片來判斷
+        # 簡化寫法：股價距離 52 週高位不能太遠 (例如 15% 以內)，代表在高位強勢震盪
+        near_high = row["PctFrom52wHigh"] >= -0.15
+        
+        # 3. 縮量回調
+        volume_drying = row["RelVol"] < 0.85
+        
+        # 4. 精準回踩支撐 (今日最低價跌穿或極接近 SMA20 或 SMA50，但收市企穩其上)
+        touch_sma20 = (row["Low"] <= row["SMA20"] * 1.01) and (row["Close"] > row["SMA20"])
+        touch_sma50 = (row["Low"] <= row["SMA50"] * 1.01) and (row["Close"] > row["SMA50"])
+        bounce_support = touch_sma20 or touch_sma50
+        
+        # 5. 回調幅度不大 (今日跌幅不能超過 3%)
+        moderate_drop = row["DailyRet"] > -0.03
+        
+        return trend_up and near_high and volume_drying and bounce_support and moderate_drop
+    except Exception: return False
+
+# ==========================================
+# 引擎 C：極端超賣撈底 (Dip Buying) - 左側均值回歸
+# ==========================================
+def check_dip_buying_signal(row):
+    """注意：撈底策略不強求大盤向好(spy_is_bullish)，因為大盤跌時巨頭最易出現極端錯殺"""
+    try:
+        # 1. 恐慌性嚴重超賣 (跌穿 SMA50 超過 8%，且 RSI 極低)
+        extreme_oversold = row["PctFromSMA50"] <= -0.08 and row["RSI14"] < 35
+        
+        # 2. 觸及長線生命線 (股價跌至 SMA200 的 3% 範圍內，或者已經跌穿)
+        near_sma200 = row["Low"] <= row["SMA200"] * 1.03
+        
+        # 3. 恐慌爆量接盤 (成交量必須顯著放大，代表底部有人撈貨)
+        capitulation_vol = row["RelVol"] > 1.5
+        
+        # 4. 神奇九轉 (TD Setup) 顯示下跌動能衰竭 (可選，但加強勝率)
+        # Setup_down 係負數，-8 或 -9 代表極度衰竭
+        td_exhaustion = row["TD_Setup"] <= -8
+        
+        # 滿足基本超賣條件 且 (爆量 或 TD衰竭) 都可以視為撈底機會
+        return extreme_oversold and near_sma200 and (capitulation_vol or td_exhaustion)
+    except Exception: return False
 
 def candidate_snapshot_dict(ticker, row):
-    """將screening階段已經計算好嘅數值，包裝做一個dict，
-    方便直接傳俾AI prompt，唔使之後再重新計算一次（亦唔會再漏嘢）。"""
+    """將技術指標打包，傳俾 AI"""
     return {
-        "ticker": ticker,
-        "close": float(row["Close"]),
-        "sma20": float(row["SMA20"]),
-        "sma50": float(row["SMA50"]),
-        "sma200": float(row["SMA200"]) if not np.isnan(row["SMA200"]) else None,
-        "rel_vol": float(row["RelVol"]),
-        "gap_up": bool(row["GapUp"]),
-        "change_from_open_pct": float(row["ChangeFromOpen"]) * 100,
-        "daily_ret_pct": float(row["DailyRet"]) * 100,
-        "pct_from_52w_high": float(row["PctFrom52wHigh"]) * 100,
-        "rsi14": float(row["RSI14"]),
-        "ema9": float(row["EMA9"]),
-        "ema21": float(row["EMA21"]),
-        "obv": float(row["OBV"]),
-        "vwap_approx": float(row["VWAP_approx"]) if not np.isnan(row["VWAP_approx"]) else None,
+        "ticker": ticker, "close": float(row["Close"]), "sma20": float(row["SMA20"]),
+        "sma50": float(row["SMA50"]), "sma200": float(row["SMA200"]) if not np.isnan(row["SMA200"]) else None,
+        "rel_vol": float(row["RelVol"]), "gap_up": bool(row["GapUp"]),
+        "change_from_open_pct": float(row["ChangeFromOpen"]) * 100, "daily_ret_pct": float(row["DailyRet"]) * 100,
+        "pct_from_52w_high": float(row["PctFrom52wHigh"]) * 100, "rsi14": float(row["RSI14"]),
+        "ema9": float(row["EMA9"]), "ema21": float(row["EMA21"]), "obv": float(row["OBV"]),
+        "macd": float(row["MACD"]), "macd_signal": float(row["Signal"]), "macd_hist": float(row["Hist"]),
+        "kdj_k": float(row["K"]), "kdj_d": float(row["D"]), "kdj_j": float(row["J"]), "td_setup": int(row["TD_Setup"])
     }
 
-
 def format_quant_snapshot_text(c):
-    """將candidate_snapshot_dict()嘅內容格式化做prompt入面用嘅文字區塊。"""
     lines = [
-        f"- 現價：${c['close']:.2f}",
-        f"- SMA20={c['sma20']:.2f} / SMA50={c['sma50']:.2f}" + (f" / SMA200={c['sma200']:.2f}" if c["sma200"] else ""),
-        f"- RSI(14)：{c['rsi14']:.1f}",
-        f"- EMA9={c['ema9']:.2f} / EMA21={c['ema21']:.2f}（{'EMA9>EMA21，短期動能偏多' if c['ema9'] > c['ema21'] else 'EMA9<EMA21，短期動能偏弱'}）",
-        f"- OBV：{c['obv']:,.0f}",
-        f"- VWAP(20日近似值，非即市)：{'${:.2f}'.format(c['vwap_approx']) if c['vwap_approx'] else '資料不足'}",
-        f"- 距52週高位：{c['pct_from_52w_high']:.1f}%",
-        f"- 相對成交量(對20日均量)：{c['rel_vol']:.2f}x",
-        f"- 今日跳空：{'有' if c['gap_up'] else '無'}，開盤至今漲幅：{c['change_from_open_pct']:.2f}%，單日總漲幅：{c['daily_ret_pct']:.2f}%",
-        "- 以上數據係系統篩選呢隻股票時已經確認符合突破條件嘅實際根據，唔需要再話「資料不足」。",
+        f"- 現價：${c['close']:.2f} (距52週高位：{c['pct_from_52w_high']:.1f}%)",
+        f"- 均線結構：SMA20={c['sma20']:.2f} | SMA50={c['sma50']:.2f}" + (f" | SMA200={c['sma200']:.2f}" if c.get("sma200") else ""),
+        f"- 短期動能：EMA9={c['ema9']:.2f} | EMA21={c['ema21']:.2f}",
+        f"- 震盪指標：RSI(14)={c['rsi14']:.1f} | KDJ(K={c['kdj_k']:.1f}, D={c['kdj_d']:.1f}, J={c['kdj_j']:.1f})",
+        f"- 趨勢指標：MACD={c['macd']:.2f}, Hist={c['macd_hist']:.2f}",
+        f"- 神奇九轉 (TD Setup)：{c['td_setup']} (正數為上漲結構，負數為下跌結構)",
+        f"- 量價結構：相對均量={c['rel_vol']:.2f}x | OBV={c['obv']:,.0f}",
+        f"- 日內表現：單日總跌漲={c['daily_ret_pct']:.2f}% | 開盤至今={c['change_from_open_pct']:.2f}% | 跳空={'有' if c['gap_up'] else '無'}",
     ]
     return "\n".join(lines)

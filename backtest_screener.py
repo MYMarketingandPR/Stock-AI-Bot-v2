@@ -55,11 +55,12 @@ POSITION_SIZE_SWEEP = [0.05, 0.10, 0.15, 0.20, 0.25]
 TIER_BASE_SWEEP = [0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.25,
                     0.275, 0.30, 0.325, 0.35]
 
-# 🧪 Pullback進場條件sweep：現時volume_drying門檻係RelVol<0.65（即成交量跌到20日均量
-# 嫁65%以下就當「縮量」），呢個相對寬鬆。Pullback佔全部訊號七成以上，但55.8%直接食-5%停損、
-# 只有6.4%食到浮動止賺——懷疑門檻太鬆，混入太多質素一般嚫訊號。
-# 呢個sweep淨係用訓練期數據揀邊個門檻CAGR最好，再攞嗰個去驗證期做誠實出樣本外測試
-# （同position size sweep一樣嚫方法，唔偷睇驗證期）。
+# 🧪 Pullback進場條件sweep：曾經試過嫁volume_drying門檻(RelVol<X)。原本default係0.65
+# （成交量跌到20日均量65%以下就當「縮量」）相對寬鬆，Pullback佔全部訊號七成以上，但
+# 55.8%直接食-5%停損、只有6.4%食到浮動止賺。Sweep用訓練期數據揀出0.35（CAGR最高），
+# 驗證期出樣本外CAGR+16.72%遠勝0.65嫁+3.38%，用戶已知悉細樣本/noise風險後
+# 明確要求採用0.35做而家嫁production default（見strategy_core.check_pullback_signal）。
+# 呢個sweep list保留做診斷/對照用，唔代表而家嫁default。
 PULLBACK_VOLUME_SWEEP = [0.65, 0.55, 0.45, 0.35, 0.25]
 # 固定用返「全部股票池、單一倉位25%」呢個框架嚫size，淨係換Pullback進場門檻，
 # 咁先可以單純睇到「收緊進場條件」本身嫁效果，唔會同position sizing嫁改動混埋一齊。
@@ -509,7 +510,7 @@ def analyze_pullback_sweep(data_cache, spy_filter):
         return df_all[train_mask].reset_index(drop=True), df_all[valid_mask].reset_index(drop=True)
 
     lines = [
-        "=== Pullback進場條件收緊 sweep（固定用全部股票池、單一倉位25%，淨係換Pullback嫁volume_drying門檻，現時default=0.65） ===",
+        "=== Pullback進場條件收緊 sweep（固定用全部股票池、單一倉位25%，淨係換Pullback嫁volume_drying門檻，現時production default=0.35） ===",
     ]
     cache_train, cache_valid, train_rows = {}, {}, []
     for vmax in PULLBACK_VOLUME_SWEEP:
@@ -544,7 +545,7 @@ def analyze_pullback_sweep(data_cache, spy_filter):
     if baseline_valid_df is not None:
         baseline_result = apply_fixed_size(baseline_valid_df, INITIAL_CAPITAL, PULLBACK_SWEEP_FIXED_SIZE)
         if baseline_result is not None:
-            lines.append(f"（對照：現時default門檻0.65喺驗證期嫁CAGR {baseline_result['cagr']:+.2f}%——同上面「全部股票池，單一倉位%」驗證期數字應該一致，方便互相對照）")
+            lines.append(f"（對照：舊default門檻0.65喺驗證期嫁CAGR {baseline_result['cagr']:+.2f}%，方便同新default比較）")
 
     lines.append("--- 參考（唔應該用嚫揀參數！純粹量度過擬合風險）：如果直接用驗證期自己數據揀最啱門檻 ---")
     valid_rows = []

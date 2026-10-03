@@ -141,10 +141,20 @@ def check_breakout_signal(row, spy_is_bullish):
 # 引擎 B：強勢回踩 (Pullback) - 🚀 終極狙擊：只選最強、波幅乾涸、右側啟動
 # 🧪 volume_drying_max/volatility_max/pct_from_high_min 開放做參數，方便backtest
 #    用train/validation out-of-sample方法去sweep「收緊幾多」至實際有幫助，
-#    唔會影響main.py/main_v4.py現有live邏輯(佢哋冇用呢個engine，照用default值)。
+#    唔會影響main.py/main_v4.py現有live邏輯(佢哋冇用呢個engine)。
+#
+# volume_drying_max依家default由0.65收緊到0.35（2023-01~2026-09訓練/驗證拆期sweep結果：
+# 訓練期揀出0.35令全組合CAGR最高+37.65%，驗證期出樣本外CAGR +16.72%，遠勝現有0.65嫁+3.38%）。
+# ⚠️ 坦白講：呢個係用戶明確知道以下風險後，主動要求揀嫁答案，唔係淨係睇CAGR靚就直接用——
+#   (1)訓練期入面，收緊門檻並冇真正提升Pullback自己嫁勝率(36.7%→29.6%，反而跌)，
+#      CAGR上升主要係因為少咗Pullback訊號爭用資金，令Breakout/Dip_Buy有更多資金可用，
+#      即係「少做衰嘢」而唔係「做啱嘢」；
+#   (2)樣本好細（訓練期揀中嫁門檻得27次Pullback訊號，驗證期得21次），
+#      驗證期自己揀最啱門檻嫁sweep曲線上落好跳(3.38%→17.01%→15.77%→16.72%→4.56%)，
+#      冇清晰趨勢，係細樣本noise嫁典型徵號。
 # ==========================================
 def check_pullback_signal(row, spy_is_bullish, df_history,
-                           volume_drying_max=0.65, volatility_max=0.025, pct_from_high_min=-0.08):
+                           volume_drying_max=0.35, volatility_max=0.025, pct_from_high_min=-0.08):
     try:
         if not spy_is_bullish or len(df_history) < 3: return False
 

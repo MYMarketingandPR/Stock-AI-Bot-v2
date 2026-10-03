@@ -55,10 +55,8 @@ def compute_indicators(df):
     
     # 形態與乖離
     df["High52w"] = df["Close"].rolling(252).max()
-    df["High20d"] = df["High"].rolling(20).max()
     df["GapUp"] = df["Open"] > df["Close"].shift(1)
     df["PctFrom52wHigh"] = (df["Close"] - df["High52w"]) / df["High52w"]
-    df["PctFromSMA50"] = (df["Close"] - df["SMA50"]) / df["SMA50"]
     df["ChangeFromOpen"] = (df["Close"] - df["Open"]) / df["Open"]
     df["DailyRet"] = df["Close"] / df["Close"].shift(1) - 1
 
@@ -84,7 +82,7 @@ def compute_indicators(df):
     df['D'] = df['K'].ewm(com=2, adjust=False).mean()
     df['J'] = 3 * df['K'] - 2 * df['D']
     
-    # 神奇九轉 (TD Setup) - 下跌結構(Buy Setup) 預設為負數, 上漲結構(Sell Setup) 預設為正數
+    # 神奇九轉 (TD Setup)
     df['TD_Setup'] = 0
     setup_up, setup_down = 0, 0
     for i in range(4, len(df)):
@@ -102,7 +100,7 @@ def compute_indicators(df):
     return df
 
 # ==========================================
-# 引擎 A：爆量缺口突破 (Breakout) - 右側趨勢
+# 引擎 A：爆量缺口突破 (Breakout) - 維持原本的 60%+ 勝率王牌
 # ==========================================
 def check_breakout_signal(row, spy_is_bullish):
     try:
@@ -125,76 +123,58 @@ def check_breakout_signal(row, spy_is_bullish):
     except Exception: return False
 
 # ==========================================
-# 引擎 B：強勢回踩 (Pullback) - 狙擊手級別 (追求 60%+ 勝率)
+# 引擎 B：強勢回踩 (Pullback) - 🚀 狙擊手級別 (追求 60%+ 勝率)
 # ==========================================
 def check_pullback_signal(row, spy_is_bullish, df_history):
     try:
         if not spy_is_bullish: return False
         
-        # 1. 🚀 嚴格多頭排列：絕不買入短線已走弱的股票
+        # 1. 嚴格多頭排列：絕不買入短線已走弱的股票
         strict_trend_up = row["SMA20"] > row["SMA50"] > row["SMA200"]
         if not strict_trend_up: return False
         
-        # 2. 🚀 健康的 RSI 休整：回踩時 RSI 不應崩盤，必須在 45 到 65 之間
+        # 2. 健康的 RSI 休整：回踩時 RSI 不應崩盤，必須在 45 到 65 之間
         healthy_rsi = 45 <= row["RSI14"] <= 65
         
         # 3. 縮量回調：證明沒有主力在拋售
-        volume_drying = row["RelVol"] < 0.80
+        volume_drying = row["RelVol"] < 0.85
         
-        # 4. 精準回踩 SMA20 或 SMA50，且強勢反彈
+        # 4. 精準回踩 SMA20 或 SMA50
         touch_sma20 = (row["Low"] <= row["SMA20"] * 1.01) and (row["Close"] > row["SMA20"])
         touch_sma50 = (row["Low"] <= row["SMA50"] * 1.01) and (row["Close"] > row["SMA50"])
         bounce_support = touch_sma20 or touch_sma50
         
-        # 5. MACD 柱狀圖收斂：證明下跌動能正在減弱 (Hist 雖然是負數，但比昨天高)
+        # 5. MACD 柱狀圖收斂：證明下跌動能正在減弱
         macd_improving = row["Hist"] > df_history["Hist"].iloc[-2]
         
-        return strict_trend_up and healthy_rsi and volume_drying and bounce_support and macd_improving
+        # 6. K線確認：必須收陽線或帶長下影線
+        daily_range = row["High"] - row["Low"]
+        lower_shadow = row["Close"] - row["Low"] if row["Close"] < row["Open"] else row["Open"] - row["Low"]
+        has_lower_shadow = (lower_shadow / daily_range > 0.5) if daily_range > 0 else False
+        bullish_candle = (row["Close"] > row["Open"]) or has_lower_shadow
+        
+        return strict_trend_up and healthy_rsi and volume_drying and bounce_support and macd_improving and bullish_candle
     except Exception: return False
 
 # ==========================================
-# 引擎 C：極度超賣「右側反轉」 (Reversal) - 取代舊的盲目撈底
+# 引擎 C：極度超賣「右側反轉」 (Dip Buy) - 取代舊的盲目左側接飛刀
 # ==========================================
 def check_dip_buying_signal(row, df_history):
-    """將左側接飛刀，改為右側確認反轉，大幅提升勝率"""
     try:
         # 1. 尋找「曾經」的極度恐慌：過去 5 天內，RSI 曾經跌破 30
         recent_oversold = df_history["RSI14"].iloc[-5:].min() < 30
         
         # 2. 🚀 趨勢反轉確認 (Golden Rule)：今日收盤價必須強勢站回 EMA9 之上！
         # 這是短線止跌、多頭反攻的最核心訊號
-        reclaimed_ema9 = row["Close"] > row["EMA9"] and df_history["Close"].iloc[-2] <= df_history["EMA9"].iloc[-2]
+        reclaimed_ema9 = (row["Close"] > row["EMA9"]) and (df_history["Close"].iloc[-2] <= df_history["EMA9"].iloc[-2])
         
         # 3. 底部爆量：證明大機構已經進場接盤
         volume_support = row["RelVol"] > 1.2
         
-        # 4. MACD 金叉或即將金叉
+        # 4. MACD 金叉或柱狀圖開始縮短
         macd_turning_up = row["Hist"] > df_history["Hist"].iloc[-2]
 
         return recent_oversold and reclaimed_ema9 and volume_support and macd_turning_up
-    except Exception: return False
-
-# ==========================================
-# 引擎 C：極端超賣撈底 (Dip Buying) - 左側均值回歸
-# ==========================================
-def check_dip_buying_signal(row):
-    """注意：撈底策略不強求大盤向好(spy_is_bullish)，因為大盤跌時巨頭最易出現極端錯殺"""
-    try:
-        # 1. 恐慌性嚴重超賣 (跌穿 SMA50 超過 8%，且 RSI 極低)
-        extreme_oversold = row["PctFromSMA50"] <= -0.08 and row["RSI14"] < 35
-        
-        # 2. 觸及長線生命線 (股價跌至 SMA200 的 3% 範圍內，或者已經跌穿)
-        near_sma200 = row["Low"] <= row["SMA200"] * 1.03
-        
-        # 3. 恐慌爆量接盤 (成交量必須顯著放大，代表底部有人撈貨)
-        capitulation_vol = row["RelVol"] > 1.5
-        
-        # 4. 神奇九轉 (TD Setup) 顯示下跌動能衰竭 (可選，但加強勝率)
-        # Setup_down 係負數，-8 或 -9 代表極度衰竭
-        td_exhaustion = row["TD_Setup"] <= -8
-        
-        # 滿足基本超賣條件 且 (爆量 或 TD衰竭) 都可以視為撈底機會
-        return extreme_oversold and near_sma200 and (capitulation_vol or td_exhaustion)
     except Exception: return False
 
 def candidate_snapshot_dict(ticker, row):

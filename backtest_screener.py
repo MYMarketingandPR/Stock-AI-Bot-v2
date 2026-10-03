@@ -1,204 +1,230 @@
-"""
-strategy_core.py
-核心量化引擎：負責計算技術指標，及判斷三大策略（突破、回踩、撈底）嘅觸發條件。
-"""
+import pandas as pd
 import numpy as np
+import yfinance as yf
 
-# 擴充版 MEGA_CAP_TICKERS (近 300 隻核心藍籌與高流動性巨無霸)
-MEGA_CAP_TICKERS = [
-    "AAPL", "ABBV", "ABT", "ACN", "ADBE", "ADI", "ADP", "AEE", "AEM", "AEP", 
-    "AFL", "AIG", "ALL", "AMAT", "AMD", "AME", "AMGN", "AMZN", "AON", "APD", 
-    "ASML", "AVGO", "AWK", "AXP", "AZN", "AZO", "BA", "BAC", "BBY", "BIIB", 
-    "BKNG", "BLK", "BMO", "BMY", "BNS", "BRK-B", "BSX", "BXP", "C", "CAG", 
-    "CARR", "CAT", "CB", "CCI", "CDNS", "CDW", "CHD", "CI", "CMCSA", "CME", 
-    "CMG", "CNC", "CNQ", "COF", "COP", "COST", "CPRT", "CRM", "CSCO", "CSX", 
-    "CTAS", "CTRA", "CTSH", "CTVA", "CVS", "CVX", "D", "DAL", "DE", "DFS", 
-    "DHI", "DHR", "DIA", "DIS", "DLR", "DOV", "DTE", "DUK", "EBAY", "ECL", 
-    "ED", "EIX", "EL", "ELV", "EMR", "ENB", "EOG", "EQR", "ESS", "ETN", 
-    "EW", "EXC", "EXPD", "EXPE", "EXR", "F", "FAST", "FCX", "FDX", "FE", 
-    "FICO", "FITB", "FTNT", "GD", "GDX", "GE", "GILD", "GIS", "GLD", "GM", 
-    "GOLD", "GOOG", "GOOGL", "GPC", "GPN", "GS", "GWW", "HAL", "HCA", "HD", 
-    "HIG", "HLT", "HON", "HRL", "HST", "HUM", "IBM", "ICE", "IDXX", "IFF", 
-    "INTC", "INTU", "IP", "IQV", "IRM", "ISRG", "ITW", "IWM", "JNJ", "JPM", 
-    "K", "KDP", "KEY", "KHC", "KIM", "KLAC", "KMB", "KMI", "KO", "KR", 
-    "L", "LIN", "LLY", "LMT", "LOW", "LRCX", "LUV", "LYB", "MA", "MAR", 
-    "MAS", "MCD", "MCHP", "MCK", "MCO", "MDLZ", "MDT", "MET", "META", "MGM", 
-    "MMC", "MMM", "MNST", "MO", "MPC", "MRK", "MS", "MSFT", "MSI", "MTB", 
-    "MTD", "MU", "NEE", "NEM", "NFLX", "NKE", "NOC", "NOW", "NSC", "NTRS", 
-    "NUE", "NVDA", "NVO", "NVS", "NXPI", "O", "ODFL", "OMC", "ORCL", "ORLY", 
-    "OTIS", "OXY", "PANW", "PAYX", "PCAR", "PEG", "PEP", "PFE", "PG", "PGR", 
-    "PH", "PM", "PNC", "PNR", "PPG", "PPL", "PRU", "PSX", "PYPL", "QCOM", 
-    "REGN", "RF", "ROK", "ROP", "ROST", "RSG", "RTX", "RY", "SAP", "SBUX", 
-    "SCHW", "SHEL", "SHW", "SLB", "SLV", "SMH", "SNPS", "SO", "SONY", "SPG", 
-    "SPGI", "SPY", "SRE", "STT", "STZ", "SU", "SWK", "SYF", "SYK", "SYY", 
-    "T", "TD", "TEL", "TGT", "TJX", "TM", "TMO", "TRGP", "TRI", "TRMB", 
-    "TROW", "TRP", "TRV", "TSLA", "TSM", "TT", "TTE", "TXN", "TXT", "UBER", 
-    "UDR", "UNH", "UNP", "UPS", "USB", "V", "VLO", "VMC", "VTR", "VTRS", 
-    "WAB", "WAT", "WBA", "WDC", "WEC", "WELL", "WFC", "WM", "WMT", "WY", 
-    "XEL", "XOM", "XYL", "YUM", "ZBH", "ZION"
-]
+from strategy_core import (
+    compute_indicators, 
+    check_breakout_signal, 
+    check_pullback_signal, 
+    check_dip_buying_signal, 
+    MEGA_CAP_TICKERS
+)
 
-def compute_indicators(df):
-    """計算所有核心技術指標、MACD、KDJ 及 神奇九轉"""
-    df = df.copy()
-    
-    # 基礎均線與量價
-    df["SMA20"] = df["Close"].rolling(20).mean()
-    df["SMA50"] = df["Close"].rolling(50).mean()
-    df["SMA200"] = df["Close"].rolling(200).mean()
-    df["EMA9"] = df["Close"].ewm(span=9, adjust=False).mean()
-    df["EMA21"] = df["Close"].ewm(span=21, adjust=False).mean()
-    
-    df["VolAvg20"] = df["Volume"].rolling(20).mean()
-    df["RelVol"] = df["Volume"] / df["VolAvg20"]
-    df["OBV"] = (np.sign(df["Close"].diff()) * df["Volume"]).fillna(0).cumsum()
-    
-    # 形態與乖離
-    df["High52w"] = df["Close"].rolling(252).max()
-    df["GapUp"] = df["Open"] > df["Close"].shift(1)
-    df["PctFrom52wHigh"] = (df["Close"] - df["High52w"]) / df["High52w"]
-    df["ChangeFromOpen"] = (df["Close"] - df["Open"]) / df["Open"]
-    df["DailyRet"] = df["Close"] / df["Close"].shift(1) - 1
+# ==========================================
+# 第一步：股票池與環境設定 (100% 集中於 Mega Cap)
+# ==========================================
+WATCHLIST = MEGA_CAP_TICKERS
 
-    # RSI(14)
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    rs = gain.ewm(alpha=1 / 14, adjust=False).mean() / loss.ewm(alpha=1 / 14, adjust=False).mean()
-    df["RSI14"] = 100 - (100 / (1 + rs))
+START_DATE = "2023-01-01"
+END_DATE = "2026-09-30"
 
-    # MACD
-    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = exp1 - exp2
-    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['Hist'] = df['MACD'] - df['Signal']
-    
-    # KDJ (9,3,3)
-    low_min = df['Low'].rolling(window=9).min()
-    high_max = df['High'].rolling(window=9).max()
-    df['RSV'] = 100 * ((df['Close'] - low_min) / (high_max - low_min))
-    df['K'] = df['RSV'].ewm(com=2, adjust=False).mean()
-    df['D'] = df['K'].ewm(com=2, adjust=False).mean()
-    df['J'] = 3 * df['K'] - 2 * df['D']
-    
-    # 神奇九轉 (TD Setup)
-    df['TD_Setup'] = 0
-    setup_up, setup_down = 0, 0
-    for i in range(4, len(df)):
-        if df['Close'].iloc[i] > df['Close'].iloc[i-4]:
-            setup_up += 1
-            setup_down = 0
-            df.iloc[i, df.columns.get_loc('TD_Setup')] = setup_up if setup_up <= 9 else 9
-        elif df['Close'].iloc[i] < df['Close'].iloc[i-4]:
-            setup_down -= 1
-            setup_up = 0
-            df.iloc[i, df.columns.get_loc('TD_Setup')] = setup_down if setup_down >= -9 else -9
+# 量化風控參數 (基礎)
+HOLD_DAYS = 20
+STOP_LOSS_PCT = -0.07
+TARGET_PCT = 0.10
+BREAKEVEN_PCT = 0.05
+
+def get_spy_data():
+    try:
+        spy = yf.download("SPY", start=START_DATE, end=END_DATE, progress=False)
+        if isinstance(spy.columns, pd.MultiIndex):
+            spy.columns = spy.columns.get_level_values(0)
+        spy["SPY_SMA50"] = spy["Close"].rolling(50).mean()
+        return spy["Close"] > spy["SPY_SMA50"]
+    except Exception as e:
+        print(f"⚠️ SPY數據下載失敗（{e}）")
+        return pd.Series(dtype=bool)
+
+def prepare_data(ticker):
+    df = yf.download(ticker, start=START_DATE, end=END_DATE, progress=False)
+    if df.empty or len(df) < 210: return None
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+    return compute_indicators(df)
+
+# ==========================================
+# 第二步：三引擎同步模擬交易
+# ==========================================
+def simulate_trades(df, ticker, spy_filter):
+    trades = []
+    i, n = 0, len(df)
+
+    while i < n - HOLD_DAYS - 1:
+        date_idx = df.index[i]
+        spy_bullish = spy_filter.get(date_idx, True)
+        row = df.iloc[i]
+        
+        # 🚦 判斷觸發了哪一個引擎
+        strategy = None
+        if check_breakout_signal(row, spy_bullish):
+            strategy = "Breakout (突破)"
+        elif check_pullback_signal(row, spy_bullish, df):
+            strategy = "Pullback (回踩)"
+        elif check_dip_buying_signal(row):
+            strategy = "Dip_Buy (撈底)"
+
+        if strategy:
+            entry_price = df["Open"].iloc[i + 1]
+            entry_date = df.index[i + 1]
+            exit_price, exit_date, exit_reason = None, None, "持有到期"
+
+            current_stop_price = entry_price * (1 + STOP_LOSS_PCT)
+            target_price = entry_price * (1 + TARGET_PCT)
+            breakeven_trigger = entry_price * (1 + BREAKEVEN_PCT)
+
+            for j in range(i + 1, min(i + 1 + HOLD_DAYS, n)):
+                day_open = df["Open"].iloc[j]
+                day_high = df["High"].iloc[j]
+                day_low = df["Low"].iloc[j]
+                day_close = df["Close"].iloc[j]
+                
+                trading_days_held = j - (i + 1)
+
+                stop_hit = day_low <= current_stop_price
+                target_hit = day_high >= target_price
+
+                # 1. 觸發止盈/止損/保本
+                if stop_hit and target_hit:
+                    exit_price = min(day_open, current_stop_price)
+                    exit_date, exit_reason = df.index[j], "同日雙穿(保守判定止損)"
+                    break
+                elif stop_hit:
+                    exit_price = min(day_open, current_stop_price)
+                    reason_text = "保本離場" if current_stop_price == entry_price else "觸發止損"
+                    exit_date, exit_reason = df.index[j], reason_text
+                    break
+                elif target_hit:
+                    exit_price = target_price
+                    exit_date, exit_reason = df.index[j], "觸發止盈"
+                    break
+
+                # 2. 🚀 動態時間止損判斷 (針對不同策略設定不同寬容度)
+                if strategy == "Breakout (突破)":
+                    time_stop_d = 10
+                    time_stop_tgt = 0.03  # 突破要快，10日冇+3%就斬
+                else: 
+                    # Pullback 同 Dip Buy 需要多啲時間築底
+                    time_stop_d = 15
+                    time_stop_tgt = 0.00  # 15日唔蝕錢就可以繼續揸，否則斬
+                    
+                if trading_days_held == time_stop_d:
+                    current_return = (day_close - entry_price) / entry_price
+                    if current_return < time_stop_tgt:
+                        exit_price = day_close
+                        exit_date, exit_reason = df.index[j], f"時間止損(未達+{time_stop_tgt*100:.0f}%)"
+                        break
+
+                # 3. 保本線上移
+                if day_high >= breakeven_trigger and current_stop_price < entry_price:
+                    current_stop_price = entry_price
+
+            if exit_price is None:
+                last_j = min(i + HOLD_DAYS, n - 1)
+                exit_price, exit_date = df["Close"].iloc[last_j], df.index[last_j]
+
+            ret_pct = (exit_price - entry_price) / entry_price
+            holding_days_calendar = (exit_date - entry_date).days
+
+            trades.append({
+                "ticker": ticker,
+                "strategy": strategy, # 📊 新增：記錄觸發引擎
+                "entry_date": entry_date.date(),
+                "entry_price": round(float(entry_price), 2),
+                "exit_date": exit_date.date(),
+                "exit_price": round(float(exit_price), 2),
+                "return_pct": round(float(ret_pct) * 100, 2),
+                "holding_days": holding_days_calendar,
+                "exit_reason": exit_reason,
+            })
+            i += HOLD_DAYS
         else:
-            setup_up, setup_down = 0, 0
-            
-    return df
+            i += 1
+
+    return trades
 
 # ==========================================
-# 引擎 A：爆量缺口突破 (Breakout) - 維持原本的 60%+ 勝率王牌
+# 第三步：跑回測與生成多維度報告
 # ==========================================
-def check_breakout_signal(row, spy_is_bullish):
-    try:
-        daily_range = row["High"] - row["Low"]
-        close_strong = row["Close"] >= row["Low"] + (0.5 * daily_range) if daily_range > 0 else True
-        return (
-            spy_is_bullish
-            and row["Close"] > 15
-            and row["Close"] > row["SMA50"] > row["SMA200"]
-            and row["SMA20"] > row["SMA50"]
-            and row["Close"] < row["SMA50"] * 1.20
-            and row["PctFrom52wHigh"] >= -0.05
-            and bool(row["GapUp"])
-            and row["ChangeFromOpen"] >= 0.02
-            and row["RelVol"] >= 2.5
-            and row["DailyRet"] < 0.10
-            and row["RSI14"] < 85
-            and close_strong
-        )
-    except Exception: return False
+def run_backtest():
+    print("正在下載大盤 SPY 數據建立環境濾網...")
+    spy_filter = get_spy_data()
+    if spy_filter.empty: print("⚠️ 警告：SPY濾網未能建立")
 
-# ==========================================
-# 引擎 B：強勢回踩 (Pullback) - 🚀 狙擊手級別 (追求 60%+ 勝率)
-# ==========================================
-def check_pullback_signal(row, spy_is_bullish, df_history):
-    try:
-        if not spy_is_bullish: return False
-        
-        # 1. 嚴格多頭排列：絕不買入短線已走弱的股票
-        strict_trend_up = row["SMA20"] > row["SMA50"] > row["SMA200"]
-        if not strict_trend_up: return False
-        
-        # 2. 健康的 RSI 休整：回踩時 RSI 不應崩盤，必須在 45 到 65 之間
-        healthy_rsi = 45 <= row["RSI14"] <= 65
-        
-        # 3. 縮量回調：證明沒有主力在拋售
-        volume_drying = row["RelVol"] < 0.85
-        
-        # 4. 精準回踩 SMA20 或 SMA50
-        touch_sma20 = (row["Low"] <= row["SMA20"] * 1.01) and (row["Close"] > row["SMA20"])
-        touch_sma50 = (row["Low"] <= row["SMA50"] * 1.01) and (row["Close"] > row["SMA50"])
-        bounce_support = touch_sma20 or touch_sma50
-        
-        # 5. MACD 柱狀圖收斂：證明下跌動能正在減弱
-        macd_improving = row["Hist"] > df_history["Hist"].iloc[-2]
-        
-        # 6. K線確認：必須收陽線或帶長下影線
-        daily_range = row["High"] - row["Low"]
-        lower_shadow = row["Close"] - row["Low"] if row["Close"] < row["Open"] else row["Open"] - row["Low"]
-        has_lower_shadow = (lower_shadow / daily_range > 0.5) if daily_range > 0 else False
-        bullish_candle = (row["Close"] > row["Open"]) or has_lower_shadow
-        
-        return strict_trend_up and healthy_rsi and volume_drying and bounce_support and macd_improving and bullish_candle
-    except Exception: return False
+    print(f"\n======================================")
+    print(f"準備掃描 MEGA_CAP 組別的 {len(WATCHLIST)} 隻巨無霸...")
+    print(f"======================================")
 
-# ==========================================
-# 引擎 C：極度超賣「右側反轉」 (Dip Buy) - 取代舊的盲目左側接飛刀
-# ==========================================
-def check_dip_buying_signal(row, df_history):
-    try:
-        # 1. 尋找「曾經」的極度恐慌：過去 5 天內，RSI 曾經跌破 30
-        recent_oversold = df_history["RSI14"].iloc[-5:].min() < 30
-        
-        # 2. 🚀 趨勢反轉確認 (Golden Rule)：今日收盤價必須強勢站回 EMA9 之上！
-        # 這是短線止跌、多頭反攻的最核心訊號
-        reclaimed_ema9 = (row["Close"] > row["EMA9"]) and (df_history["Close"].iloc[-2] <= df_history["EMA9"].iloc[-2])
-        
-        # 3. 底部爆量：證明大機構已經進場接盤
-        volume_support = row["RelVol"] > 1.2
-        
-        # 4. MACD 金叉或柱狀圖開始縮短
-        macd_turning_up = row["Hist"] > df_history["Hist"].iloc[-2]
+    all_trades = []
+    for t in WATCHLIST:
+        print(f"處理緊 {t}...")
+        df = prepare_data(t)
+        if df is None: continue
+        trades = simulate_trades(df, t, spy_filter)
+        if trades: print(f" {t} 觸發咗 {len(trades)} 次訊號")
+        all_trades.extend(trades)
 
-        return recent_oversold and reclaimed_ema9 and volume_support and macd_turning_up
-    except Exception: return False
+    if not all_trades:
+        print("\n完全冇觸發任何交易訊號...")
+        return
 
-def candidate_snapshot_dict(ticker, row):
-    """將技術指標打包，傳俾 AI"""
-    return {
-        "ticker": ticker, "close": float(row["Close"]), "sma20": float(row["SMA20"]),
-        "sma50": float(row["SMA50"]), "sma200": float(row["SMA200"]) if not np.isnan(row["SMA200"]) else None,
-        "rel_vol": float(row["RelVol"]), "gap_up": bool(row["GapUp"]),
-        "change_from_open_pct": float(row["ChangeFromOpen"]) * 100, "daily_ret_pct": float(row["DailyRet"]) * 100,
-        "pct_from_52w_high": float(row["PctFrom52wHigh"]) * 100, "rsi14": float(row["RSI14"]),
-        "ema9": float(row["EMA9"]), "ema21": float(row["EMA21"]), "obv": float(row["OBV"]),
-        "macd": float(row["MACD"]), "macd_signal": float(row["Signal"]), "macd_hist": float(row["Hist"]),
-        "kdj_k": float(row["K"]), "kdj_d": float(row["D"]), "kdj_j": float(row["J"]), "td_setup": int(row["TD_Setup"])
-    }
+    result_df = pd.DataFrame(all_trades)
 
-def format_quant_snapshot_text(c):
-    lines = [
-        f"- 現價：${c['close']:.2f} (距52週高位：{c['pct_from_52w_high']:.1f}%)",
-        f"- 均線結構：SMA20={c['sma20']:.2f} | SMA50={c['sma50']:.2f}" + (f" | SMA200={c['sma200']:.2f}" if c.get("sma200") else ""),
-        f"- 短期動能：EMA9={c['ema9']:.2f} | EMA21={c['ema21']:.2f}",
-        f"- 震盪指標：RSI(14)={c['rsi14']:.1f} | KDJ(K={c['kdj_k']:.1f}, D={c['kdj_d']:.1f}, J={c['kdj_j']:.1f})",
-        f"- 趨勢指標：MACD={c['macd']:.2f}, Hist={c['macd_hist']:.2f}",
-        f"- 神奇九轉 (TD Setup)：{c['td_setup']} (正數為上漲結構，負數為下跌結構)",
-        f"- 量價結構：相對均量={c['rel_vol']:.2f}x | OBV={c['obv']:,.0f}",
-        f"- 日內表現：單日總跌漲={c['daily_ret_pct']:.2f}% | 開盤至今={c['change_from_open_pct']:.2f}% | 跳空={'有' if c['gap_up'] else '無'}",
+    total_trades = len(result_df)
+    win_trades = result_df[result_df["return_pct"] > 0]
+    lose_trades = result_df[result_df["return_pct"] < 0]
+    be_trades = result_df[result_df["return_pct"] == 0]
+
+    wins, losses, bes = len(win_trades), len(lose_trades), len(be_trades)
+    strict_win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
+    adj_win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
+    avg_win = win_trades["return_pct"].mean() if wins > 0 else 0
+    avg_loss = lose_trades["return_pct"].mean() if losses > 0 else 0
+    expectancy = (strict_win_rate / 100 * avg_win) + ((losses / total_trades) * avg_loss) if total_trades > 0 else 0
+    avg_holding_days = result_df["holding_days"].mean() if total_trades > 0 else 0
+
+    # 📊 計算各引擎獨立表現
+    strat_summary = []
+    for strat in ["Breakout (突破)", "Pullback (回踩)", "Dip_Buy (撈底)"]:
+        strat_df = result_df[result_df["strategy"] == strat]
+        if len(strat_df) > 0:
+            s_wins = len(strat_df[strat_df["return_pct"] > 0])
+            s_losses = len(strat_df[strat_df["return_pct"] < 0])
+            s_be = len(strat_df[strat_df["return_pct"] == 0])
+            s_total = len(strat_df)
+            s_rate = (s_wins / (s_wins + s_losses)) * 100 if (s_wins + s_losses) > 0 else 0
+            strat_summary.append({"ticker": f" {strat} 觸發 {s_total} 次 (贏{s_wins}/輸{s_losses}/和{s_be})，真實勝率 {s_rate:.1f}%"})
+        else:
+            strat_summary.append({"ticker": f" {strat} 無觸發紀錄"})
+
+    reason_counts = result_df["exit_reason"].value_counts()
+    reason_lines = [{"ticker": f" {reason}：{count} 次"} for reason, count in reason_counts.items()]
+
+    summary_data = [
+        {"ticker": f"=== MEGA CAP 強化三引擎回測總結 ==="},
+        {"ticker": f"總交易次數：{total_trades} 次"},
+        {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次"},
+        {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）"},
+        {"ticker": f"平均贏單利潤：+{avg_win:.2f}%"},
+        {"ticker": f"平均輸單虧損：{avg_loss:.2f}%"},
+        {"ticker": f"期望值（每注平均）：{expectancy:.2f}%"},
+        {"ticker": f"平均持股日數：{avg_holding_days:.1f} 日"},
+        {"ticker": ""},
+        {"ticker": "各引擎表現拆解："},
+        *strat_summary,
+        {"ticker": ""},
+        {"ticker": "出場原因分布："},
+        *reason_lines,
+        {"ticker": ""},
+        {"ticker": f"--- 詳細交易紀錄 ---"},
     ]
-    return "\n".join(lines)
+    
+    for d in summary_data:
+        for k in ["strategy", "entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "holding_days", "exit_reason"]:
+            if k not in d: d[k] = ""
+
+    summary_df = pd.DataFrame(summary_data)
+    final_combined_df = pd.concat([summary_df, result_df], ignore_index=True)
+    final_combined_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
+    print("\n✅ 三引擎強化詳細交易紀錄已整合並存到 backtest_results.csv")
+
+if __name__ == "__main__":
+    run_backtest()

@@ -18,10 +18,9 @@ WATCHLIST = MEGA_CAP_TICKERS
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
-# 量化風控參數 (基礎)
+# 基礎量化風控參數 (具體止盈、止損將在循環內動態分配)
 HOLD_DAYS = 20
 STOP_LOSS_PCT = -0.07
-TARGET_PCT = 0.10
 BREAKEVEN_PCT = 0.05
 
 def get_spy_data():
@@ -42,7 +41,7 @@ def prepare_data(ticker):
     return compute_indicators(df)
 
 # ==========================================
-# 第二步：三引擎同步模擬交易
+# 第二步：三引擎同步模擬交易 (差異化止盈版)
 # ==========================================
 def simulate_trades(df, ticker, spy_filter):
     trades = []
@@ -53,18 +52,32 @@ def simulate_trades(df, ticker, spy_filter):
         spy_bullish = spy_filter.get(date_idx, True)
         row = df.iloc[i]
         
-# 🚦 判斷觸發了哪一個引擎
-        strategy = None
-        
         # 將截至當日為止嘅歷史數據切片傳入去
         df_history_up_to_today = df.iloc[:i+1] 
         
+        # 🚦 判斷觸發了哪一個引擎，並設定獨立的風控參數
+        strategy = None
+        target_pct = 0.10
+        time_stop_d = 15
+        time_stop_tgt = 0.00
+        
         if check_breakout_signal(row, spy_bullish):
             strategy = "Breakout (突破)"
+            target_pct = 0.10          # 突破氣勢如虹，看 10%
+            time_stop_d = 10           # 10日內沒動靜就走
+            time_stop_tgt = 0.03       # 必須有實質利潤 (+3%)
+            
         elif check_pullback_signal(row, spy_bullish, df_history_up_to_today):
             strategy = "Pullback (回踩)"
+            target_pct = 0.05          # 🚀 改變命運的關鍵：吃 5% 波段反彈就走！
+            time_stop_d = 15           # 築底需要時間
+            time_stop_tgt = 0.00       # 15日不虧損可繼續持有
+            
         elif check_dip_buying_signal(row, df_history_up_to_today):
             strategy = "Dip_Buy (撈底)"
+            target_pct = 0.08          # 恐慌後反彈幅度較大，看 8%
+            time_stop_d = 15
+            time_stop_tgt = 0.00
 
         if strategy:
             entry_price = df["Open"].iloc[i + 1]
@@ -72,7 +85,7 @@ def simulate_trades(df, ticker, spy_filter):
             exit_price, exit_date, exit_reason = None, None, "持有到期"
 
             current_stop_price = entry_price * (1 + STOP_LOSS_PCT)
-            target_price = entry_price * (1 + TARGET_PCT)
+            target_price = entry_price * (1 + target_pct) # 動態止盈價
             breakeven_trigger = entry_price * (1 + BREAKEVEN_PCT)
 
             for j in range(i + 1, min(i + 1 + HOLD_DAYS, n)):
@@ -101,15 +114,7 @@ def simulate_trades(df, ticker, spy_filter):
                     exit_date, exit_reason = df.index[j], "觸發止盈"
                     break
 
-                # 2. 🚀 動態時間止損判斷 (針對不同策略設定不同寬容度)
-                if strategy == "Breakout (突破)":
-                    time_stop_d = 10
-                    time_stop_tgt = 0.03  # 突破要快，10日冇+3%就斬
-                else: 
-                    # Pullback 同 Dip Buy 需要多啲時間築底
-                    time_stop_d = 15
-                    time_stop_tgt = 0.00  # 15日唔蝕錢就可以繼續揸，否則斬
-                    
+                # 2. 動態時間止損判斷
                 if trading_days_held == time_stop_d:
                     current_return = (day_close - entry_price) / entry_price
                     if current_return < time_stop_tgt:
@@ -130,7 +135,7 @@ def simulate_trades(df, ticker, spy_filter):
 
             trades.append({
                 "ticker": ticker,
-                "strategy": strategy, # 📊 新增：記錄觸發引擎
+                "strategy": strategy,
                 "entry_date": entry_date.date(),
                 "entry_price": round(float(entry_price), 2),
                 "exit_date": exit_date.date(),
@@ -203,7 +208,7 @@ def run_backtest():
     reason_lines = [{"ticker": f" {reason}：{count} 次"} for reason, count in reason_counts.items()]
 
     summary_data = [
-        {"ticker": f"=== MEGA CAP 強化三引擎回測總結 ==="},
+        {"ticker": f"=== MEGA CAP 終極狙擊手回測總結 ==="},
         {"ticker": f"總交易次數：{total_trades} 次"},
         {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次"},
         {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）"},
@@ -228,7 +233,7 @@ def run_backtest():
     summary_df = pd.DataFrame(summary_data)
     final_combined_df = pd.concat([summary_df, result_df], ignore_index=True)
     final_combined_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
-    print("\n✅ 三引擎強化詳細交易紀錄已整合並存到 backtest_results.csv")
+    print("\n✅ 三引擎終極詳細交易紀錄已整合並存到 backtest_results.csv")
 
 if __name__ == "__main__":
     run_backtest()

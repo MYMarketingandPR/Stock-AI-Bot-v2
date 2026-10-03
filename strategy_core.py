@@ -116,11 +116,13 @@ def compute_indicators(df):
 
 # ==========================================
 # 引擎 A：爆量缺口突破 (Breakout) - 維持原本的 60%+ 勝率王牌
-# 🧪 relvol_min開放做參數：現時default=2.5(今日成交量要夠20日均量2.5倍先算「爆量」)，
-#    呢個引擎樣本好少(全期得70幾次訊號)但質素最好(勝率44-46%、最穩定)，
-#    想試吓放寬呢個門檻會唔會攞到更多高質素訊號(換取樣本量)而唔犧牲勝率。
+# 🧪 relvol_min(已test，放寬冇幫助，維持2.5)、change_from_open_min、extension_max
+#    開放做參數。change_from_open_min=2%(現時)係「收市要比開市高幾多%」先確認；
+#    extension_max=1.20(現時)係「股價唔可以高過SMA50幾多倍」(太延伸就唔追)。
+#    Breakout樣本一直最少(全期得70幾次)，想試吓放寬change_from_open_min會唔會
+#    攞到更多高質素訊號；extension_max兩個方向都想試。
 # ==========================================
-def check_breakout_signal(row, spy_is_bullish, relvol_min=2.5):
+def check_breakout_signal(row, spy_is_bullish, relvol_min=2.5, change_from_open_min=0.02, extension_max=1.20):
     try:
         daily_range = row["High"] - row["Low"]
         close_strong = row["Close"] >= row["Low"] + (0.5 * daily_range) if daily_range > 0 else True
@@ -129,10 +131,10 @@ def check_breakout_signal(row, spy_is_bullish, relvol_min=2.5):
             and row["Close"] > 15
             and row["Close"] > row["SMA50"] > row["SMA200"]
             and row["SMA20"] > row["SMA50"]
-            and row["Close"] < row["SMA50"] * 1.20
+            and row["Close"] < row["SMA50"] * extension_max
             and row["PctFrom52wHigh"] >= -0.05
             and bool(row["GapUp"])
-            and row["ChangeFromOpen"] >= 0.02
+            and row["ChangeFromOpen"] >= change_from_open_min
             and row["RelVol"] >= relvol_min
             and row["DailyRet"] < 0.10
             and row["RSI14"] < 85
@@ -194,11 +196,11 @@ def check_pullback_signal(row, spy_is_bullish, df_history,
 
 # ==========================================
 # 引擎 C：極度超賣「右側反轉」 (Dip Buy) - 🚀 雙重動能翻轉確認
-# 🧪 rsi_oversold_max開放做參數：現時default=30(過去5日內RSI要跌穿30先算「極度恐慌」)，
-#    數字愈細代表要求愈深嫁超賣先啱資格。Dip_Buy喺剔除咗High Beta之後而家質素幾穩
-#    (Mega Cap：40%→36.1%勝率，平均回報仲升到+3.55%)，想試吓收緊/放寬呢個門檻有冇進一步幫助。
+# 🧪 rsi_oversold_max(已test，放寬會insample過擬合，維持30)、volume_support_min
+#    開放做參數。volume_support_min=1.2(現時)係「低位果日成交量要夠20日均量1.2倍」
+#    先算「有人接貨」，數字愈大代表要求愈強嫁接貨確認。
 # ==========================================
-def check_dip_buying_signal(row, df_history, rsi_oversold_max=30):
+def check_dip_buying_signal(row, df_history, rsi_oversold_max=30, volume_support_min=1.2):
     try:
         if len(df_history) < 5: return False
 
@@ -217,7 +219,7 @@ def check_dip_buying_signal(row, df_history, rsi_oversold_max=30):
                                (df_history["Hist"].iloc[-2] > df_history["Hist"].iloc[-3])
         
         # 5. 底部爆量接盤
-        volume_support = row["RelVol"] > 1.2
+        volume_support = row["RelVol"] > volume_support_min
         
         # 6. 當日必須收陽線
         buyers_stepped_in = row["Close"] > row["Open"]

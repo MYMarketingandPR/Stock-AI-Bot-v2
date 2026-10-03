@@ -66,15 +66,26 @@ PULLBACK_VOLUME_SWEEP = [0.65, 0.55, 0.45, 0.35, 0.25]
 # 咁先可以單純睇到「收緊/放寬進場條件」本身嫁效果，唔會同position sizing嫁改動混埋一齊。
 PULLBACK_SWEEP_FIXED_SIZE = 0.25
 
-# 🧪 Breakout進場條件sweep：現時relvol_min=2.5(成交量要夠20日均量2.5倍)。Breakout樣本
-# 一直好少(全期得70幾次訊號)，但質素三個引擎中最好最穩。呢個方向試放寬(數值越細)，
-# 睇吓換唔換到更多樣本而唔犧牲勝率——同Pullback個方向(收緊)啱啱相反。
+# 🧪 已test過、結論已確定嫁sweep(維持原default)：
+#   relvol_min(Breakout)：放寬完全冇幫助，訓練期自己都揀返現有2.5，維持。
+#   rsi_oversold_max(Dip_Buy)：放寬到35訓練期靚(CAGR+44.20%)但驗證期插水到+9.83%
+#     (差距+9.26pp)，係過擬合，維持現有30。
+# 呢兩個function(analyze_breakout_sweep/analyze_dipbuy_sweep)保留喺code，
+# 但唔再放入run_backtest()嫁預設流程，慳返run time。想重新驗證隨時可以加返。
 BREAKOUT_RELVOL_SWEEP = [2.5, 2.0, 1.75, 1.5, 1.25]
-
-# 🧪 Dip_Buy進場條件sweep：現時rsi_oversold_max=30(過去5日RSI要跌穿30)。Dip_Buy喺
-# 剔除High Beta之後質素已經幾穩(Mega Cap：40%→36.1%勝率，平均回報仲升到+3.55%)，
-# 呢個sweep兩個方向都試(30,25,20,22,35)，睇吓收緊/放寬邊個方向有進一步幫助。
 DIP_BUY_RSI_SWEEP = [35, 30, 25, 22, 20]
+
+# 🧪 新一輪進場條件sweep(用戶要求一齊試)：
+#   1. Breakout change_from_open_min：現時2%(收市要比開市高2%先確認)。
+#      Breakout樣本一直最少，試放寬(換取更多樣本，睇質素頂唔頂得住)。
+BREAKOUT_CHANGE_OPEN_SWEEP = [0.02, 0.015, 0.01, 0.005]
+#   2. Breakout extension_max：現時1.20(股價唔可以高過SMA50嘅1.20倍)。兩個方向都試。
+BREAKOUT_EXTENSION_SWEEP = [1.10, 1.15, 1.20, 1.30]
+#   3. Dip_Buy volume_support_min：現時1.2倍(低位嗰日成交量嫁「接貨」確認)。試收緊。
+DIP_BUY_VOLUME_SUPPORT_SWEEP = [1.2, 1.5, 1.8, 2.0]
+#   4. Pullback volatility_max：現時2.5%(波幅窒息門檻)。Pullback啱啱先收緊咗
+#      volume_drying，樣本已經細(27/21)，兩個方向都淺試，避免再進一步縮細樣本。
+PULLBACK_VOLATILITY_SWEEP = [0.015, 0.02, 0.025, 0.035]
 
 
 def get_spy_data():
@@ -604,6 +615,46 @@ def analyze_dipbuy_sweep(data_cache, spy_filter):
     )
 
 
+def analyze_breakout_changeopen_sweep(data_cache, spy_filter):
+    return analyze_entry_condition_sweep(
+        data_cache, spy_filter,
+        label="Breakout進場條件sweep（固定用全部股票池、單一倉位25%，淨係換Breakout嫁change_from_open_min門檻，現時default=0.02，試放寬換取更多樣本）",
+        param_label="change_from_open_min", sweep_values=BREAKOUT_CHANGE_OPEN_SWEEP,
+        make_kwargs=lambda v: {"breakout_kwargs": {"change_from_open_min": v}},
+        focus_strategy="Breakout (突破)", old_default=0.02,
+    )
+
+
+def analyze_breakout_extension_sweep(data_cache, spy_filter):
+    return analyze_entry_condition_sweep(
+        data_cache, spy_filter,
+        label="Breakout進場條件sweep（固定用全部股票池、單一倉位25%，淨係換Breakout嫁extension_max門檻，現時default=1.20）",
+        param_label="extension_max", sweep_values=BREAKOUT_EXTENSION_SWEEP,
+        make_kwargs=lambda v: {"breakout_kwargs": {"extension_max": v}},
+        focus_strategy="Breakout (突破)", old_default=1.20,
+    )
+
+
+def analyze_dipbuy_volume_sweep(data_cache, spy_filter):
+    return analyze_entry_condition_sweep(
+        data_cache, spy_filter,
+        label="Dip_Buy進場條件sweep（固定用全部股票池、單一倉位25%，淨係換Dip_Buy嫁volume_support_min門檻，現時default=1.2，試收緊）",
+        param_label="volume_support_min", sweep_values=DIP_BUY_VOLUME_SUPPORT_SWEEP,
+        make_kwargs=lambda v: {"dipbuy_kwargs": {"volume_support_min": v}},
+        focus_strategy="Dip_Buy (撈底)", old_default=1.2,
+    )
+
+
+def analyze_pullback_volatility_sweep(data_cache, spy_filter):
+    return analyze_entry_condition_sweep(
+        data_cache, spy_filter,
+        label="Pullback進場條件sweep（固定用全部股票池、單一倉位25%，淨係換Pullback嫁volatility_max門檻，現時default=0.025）",
+        param_label="volatility_max", sweep_values=PULLBACK_VOLATILITY_SWEEP,
+        make_kwargs=lambda v: {"pullback_kwargs": {"volatility_max": v}},
+        focus_strategy="Pullback (回踩)", old_default=0.025,
+    )
+
+
 def run_backtest():
     print("正在下載大盤 SPY 數據建立環境濾網...")
     spy_filter = get_spy_data()
@@ -644,16 +695,21 @@ def run_backtest():
         mega_only_df, "只用 Mega Cap，按策略類型分級(Breakout加碼、Pullback減碼，Mega Cap入面冇High Beta所以組別倍數都係1.0)"
     )
 
-    print("\n開始進場條件sweep（Pullback/Breakout/Dip_Buy，重用已下載數據，唔會再call yfinance）...")
+    print("\n開始進場條件sweep（Pullback volatility/Breakout change_open/Breakout extension/"
+          "Dip_Buy volume_support，重用已下載數據，唔會再call yfinance）...")
     pullback_sweep_result = analyze_pullback_sweep(data_cache, spy_filter)
-    breakout_sweep_result = analyze_breakout_sweep(data_cache, spy_filter)
-    dipbuy_sweep_result = analyze_dipbuy_sweep(data_cache, spy_filter)
+    pullback_vol_sweep_result = analyze_pullback_volatility_sweep(data_cache, spy_filter)
+    breakout_changeopen_result = analyze_breakout_changeopen_sweep(data_cache, spy_filter)
+    breakout_extension_result = analyze_breakout_extension_sweep(data_cache, spy_filter)
+    dipbuy_volume_result = analyze_dipbuy_volume_sweep(data_cache, spy_filter)
 
     summary_lines = [
         "=== 回測報告：訓練期揀參數 → 驗證期做Out-of-Sample測試（防過擬合）===",
         f"每段獨立用返 ${INITIAL_CAPITAL:,.2f} 本金起跑（冇槓桿，資金唔夠嘅訊號會被跳過）",
         "⚠️ Dip_Buy+High Beta已經結構性剔除（見strategy_core.DIP_BUY_EXCLUDED_GROUPS，"
         "原因同caveat見code comment），下面全部結果都已經反映呢個改動。",
+        "⚠️ Breakout relvol_min同Dip_Buy rsi_oversold_max之前已經sweep過，結論係維持現有"
+        "default(放寬都冇幫助甚至過擬合)，呢次冇再放落report，淨係試新一批進場條件。",
         "",
     ]
     summary_lines += full_result["lines"]
@@ -666,9 +722,13 @@ def run_backtest():
     summary_lines += [""]
     summary_lines += pullback_sweep_result["lines"]
     summary_lines += [""]
-    summary_lines += breakout_sweep_result["lines"]
+    summary_lines += pullback_vol_sweep_result["lines"]
     summary_lines += [""]
-    summary_lines += dipbuy_sweep_result["lines"]
+    summary_lines += breakout_changeopen_result["lines"]
+    summary_lines += [""]
+    summary_lines += breakout_extension_result["lines"]
+    summary_lines += [""]
+    summary_lines += dipbuy_volume_result["lines"]
     summary_lines += [
         "",
         "--- 詳細交易紀錄（下面全部用「全部股票池、單一倉位%」版本；period=訓練/驗證；"
@@ -720,15 +780,20 @@ def run_backtest():
     mega_tiered_cagr_print = f"{mega_tiered_oos['cagr']:+.2f}%" if mega_tiered_oos is not None else "N/A"
     pb_valid_result = pullback_sweep_result.get("valid_result")
     pb_cagr_print = f"{pb_valid_result['cagr']:+.2f}%" if pb_valid_result is not None else "N/A"
-    bo_valid_result = breakout_sweep_result.get("valid_result")
-    bo_cagr_print = f"{bo_valid_result['cagr']:+.2f}%" if bo_valid_result is not None else "N/A"
-    db_valid_result = dipbuy_sweep_result.get("valid_result")
-    db_cagr_print = f"{db_valid_result['cagr']:+.2f}%" if db_valid_result is not None else "N/A"
-    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本，四種資金分配方式對比 + 3個進場條件sweep）。"
+    pbv_valid_result = pullback_vol_sweep_result.get("valid_result")
+    pbv_cagr_print = f"{pbv_valid_result['cagr']:+.2f}%" if pbv_valid_result is not None else "N/A"
+    boc_valid_result = breakout_changeopen_result.get("valid_result")
+    boc_cagr_print = f"{boc_valid_result['cagr']:+.2f}%" if boc_valid_result is not None else "N/A"
+    boe_valid_result = breakout_extension_result.get("valid_result")
+    boe_cagr_print = f"{boe_valid_result['cagr']:+.2f}%" if boe_valid_result is not None else "N/A"
+    dbv_valid_result = dipbuy_volume_result.get("valid_result")
+    dbv_cagr_print = f"{dbv_valid_result['cagr']:+.2f}%" if dbv_valid_result is not None else "N/A"
+    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本，四種資金分配方式對比 + 5個進場條件sweep）。"
           f"全部股票池(單一%)：{valid_cagr_print}；Mega-Cap-only(單一%)：{mega_cagr_print}；"
           f"全部股票池(分級)：{tiered_cagr_print}；Mega-Cap-only(分級)：{mega_tiered_cagr_print}；"
-          f"Pullback sweep後(全部股票池、單一25%)：{pb_cagr_print}；"
-          f"Breakout sweep後：{bo_cagr_print}；Dip_Buy sweep後：{db_cagr_print}。"
+          f"Pullback volume sweep後：{pb_cagr_print}；Pullback volatility sweep後：{pbv_cagr_print}；"
+          f"Breakout change_open sweep後：{boc_cagr_print}；Breakout extension sweep後：{boe_cagr_print}；"
+          f"Dip_Buy volume_support sweep後：{dbv_cagr_print}。"
           f"已存到 backtest_results.csv")
 
 

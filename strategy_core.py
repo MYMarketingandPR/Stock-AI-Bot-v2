@@ -139,23 +139,27 @@ def check_breakout_signal(row, spy_is_bullish):
 
 # ==========================================
 # 引擎 B：強勢回踩 (Pullback) - 🚀 終極狙擊：只選最強、波幅乾涸、右側啟動
+# 🧪 volume_drying_max/volatility_max/pct_from_high_min 開放做參數，方便backtest
+#    用train/validation out-of-sample方法去sweep「收緊幾多」至實際有幫助，
+#    唔會影響main.py/main_v4.py現有live邏輯(佢哋冇用呢個engine，照用default值)。
 # ==========================================
-def check_pullback_signal(row, spy_is_bullish, df_history):
+def check_pullback_signal(row, spy_is_bullish, df_history,
+                           volume_drying_max=0.65, volatility_max=0.025, pct_from_high_min=-0.08):
     try:
         if not spy_is_bullish or len(df_history) < 3: return False
-        
+
         # 1. 嚴格多頭：SMA20 > SMA50 > SMA200
         strict_trend_up = row["SMA20"] > row["SMA50"] > row["SMA200"]
-        
-        # 2. 🚀 極致相對強勢：距離 52 週新高不能超過 8% (只買市場領導者)
-        super_strong = row["PctFrom52wHigh"] >= -0.08
-        
-        # 3. 🚀 波幅窒息 (Tight Area)：今日波幅小於 2.5% (賣壓完全耗盡)
+
+        # 2. 🚀 極致相對強勢：距離 52 週新高不能超過 X% (只買市場領導者)
+        super_strong = row["PctFrom52wHigh"] >= pct_from_high_min
+
+        # 3. 🚀 波幅窒息 (Tight Area)：今日波幅細過X% (賣壓完全耗盡)
         daily_volatility = (row["High"] - row["Low"]) / row["Close"]
-        volatility_contraction = daily_volatility < 0.025
-        
-        # 4. 極度縮量回調
-        volume_drying = row["RelVol"] < 0.65
+        volatility_contraction = daily_volatility < volatility_max
+
+        # 4. 縮量回調：相對成交量細過X倍
+        volume_drying = row["RelVol"] < volume_drying_max
         
         # 5. 精準回踩支撐
         touch_sma20 = (row["Low"] <= row["SMA20"] * 1.01) and (row["Close"] > row["SMA20"])
@@ -242,6 +246,28 @@ GROUP_SIZE_MULTIPLIER = {
     "High Beta": 0.5,    # 驗證期勝率/回報明顯轉差 → 減碼
 }
 BASE_POSITION_SIZE_PCT = 0.10  # 基準單位：Dip_Buy + Mega Cap = 1.0 x 1.0 = 10%
+
+
+# ==========================================
+# 策略 x 組別 可用性規則（結構性風控，唔係靠fit出嚫參數）
+#
+# 依據：2023-01~2026-09 train/validation拆期數據——
+#   Dip_Buy+High Beta：訓練期33.33%勝率(3次，樣本太少)，驗證期崩到6.67%勝率(15次，平均回報-2.93%)。
+#   經濟解釋：High Beta呢批高波動妖股，超賣之後未必會乖乖「右側確認反轉」，
+#   跌落去可以繼續跌，Dip_Buy依賴嚫「抄底右側確認」邏輯對呢批股特別唔work。
+#   ⚠️ 坦白講：呢個發現主要係由驗證期數據觀察到(訓練期樣本太少未能提早確認)，
+#   嚴格嚫train-then-validate原則嚫角度,呢個唔算100%乾淨嚫出樣本外證據，
+#   但佢係一個有經濟邏輯支持嚫結構性風控決定，唔係為追CAGR數字而fit嚫參數。
+# main.py現時冇用Dip_Buy/High Beta(只用Breakout+Mega Cap)，所以呢個規則暫時只影響backtest_screener.py。
+# ==========================================
+DIP_BUY_EXCLUDED_GROUPS = {"High Beta"}
+
+
+def is_strategy_allowed(strategy, group):
+    """check呢個(策略,組別)組合係唔係被結構性規則禁止使用。"""
+    if strategy == "Dip_Buy (撈底)" and group in DIP_BUY_EXCLUDED_GROUPS:
+        return False
+    return True
 
 
 def get_tiered_position_size_pct(strategy, group, base=BASE_POSITION_SIZE_PCT,

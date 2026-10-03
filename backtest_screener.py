@@ -13,6 +13,7 @@ from strategy_core import (
     get_tiered_position_size_pct,
     STRATEGY_SIZE_MULTIPLIER,
     GROUP_SIZE_MULTIPLIER,
+    is_strategy_allowed,
 )
 
 # ==========================================
@@ -54,6 +55,16 @@ POSITION_SIZE_SWEEP = [0.05, 0.10, 0.15, 0.20, 0.25]
 TIER_BASE_SWEEP = [0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.25,
                     0.275, 0.30, 0.325, 0.35]
 
+# 🧪 Pullback進場條件sweep：現時volume_drying門檻係RelVol<0.65（即成交量跌到20日均量
+# 嫁65%以下就當「縮量」），呢個相對寬鬆。Pullback佔全部訊號七成以上，但55.8%直接食-5%停損、
+# 只有6.4%食到浮動止賺——懷疑門檻太鬆，混入太多質素一般嚫訊號。
+# 呢個sweep淨係用訓練期數據揀邊個門檻CAGR最好，再攞嗰個去驗證期做誠實出樣本外測試
+# （同position size sweep一樣嚫方法，唔偷睇驗證期）。
+PULLBACK_VOLUME_SWEEP = [0.65, 0.55, 0.45, 0.35, 0.25]
+# 固定用返「全部股票池、單一倉位25%」呢個框架嚫size，淨係換Pullback進場門檻，
+# 咁先可以單純睇到「收緊進場條件」本身嫁效果，唔會同position sizing嫁改動混埋一齊。
+PULLBACK_SWEEP_FIXED_SIZE = 0.25
+
 
 def get_spy_data():
     try:
@@ -79,9 +90,11 @@ def prepare_data(ticker):
 # ==========================================
 # 第二步：三引擎同步模擬交易（邏輯不變，只係訊號產生，唔處理資金）
 # ==========================================
-def simulate_trades(df, ticker, spy_filter):
+def simulate_trades(df, ticker, spy_filter, pullback_kwargs=None):
     trades = []
     i, n = 0, len(df)
+    group_tag = "High Beta" if ticker in HIGH_BETA_TICKERS else "Mega Cap"
+    pullback_kwargs = pullback_kwargs or {}
 
     while i < n - HOLD_DAYS - 1:
         date_idx = df.index[i]
@@ -92,9 +105,9 @@ def simulate_trades(df, ticker, spy_filter):
         strategy = None
         if check_breakout_signal(row, spy_bullish):
             strategy = "Breakout (突破)"
-        elif check_pullback_signal(row, spy_bullish, df_history_up_to_today):
+        elif check_pullback_signal(row, spy_bullish, df_history_up_to_today, **pullback_kwargs):
             strategy = "Pullback (回踩)"
-        elif check_dip_buying_signal(row, df_history_up_to_today):
+        elif check_dip_buying_signal(row, df_history_up_to_today) and is_strategy_allowed("Dip_Buy (撈底)", group_tag):
             strategy = "Dip_Buy (撈底)"
 
         if strategy:
@@ -471,6 +484,84 @@ def analyze_tiered_universe(df_all, label):
     }
 
 
+def analyze_pullback_sweep(data_cache, spy_filter):
+    """Pullback進場條件sweep：用訓練期數據揀邊個volume_drying_max門檻（成交量要跌到
+    20日均量嫁幾多%以下先當「縮量」）令全組合CAGR最好，再攞嗰個門檻去驗證期做誠實
+    出樣本外測試。固定用「全部股票池、單一倉位25%」框架，淨係換Pullback嫁進場門檻，
+    唔會同position sizing嫁改動混埋一齊，先可以單純睇到「收緊進場條件」本身嫁效果。
+    重用data_cache(已經download+算好indicator嫁dataframe)，唔會再call yfinance。"""
+    def build_trades_df(volume_drying_max):
+        trades = []
+        for t, df in data_cache.items():
+            trades.extend(simulate_trades(df, t, spy_filter, pullback_kwargs={"volume_drying_max": volume_drying_max}))
+        cols = ["ticker", "group", "strategy", "entry_date", "entry_price", "exit_date",
+                "exit_price", "return_pct", "holding_days", "exit_reason"]
+        if not trades:
+            return pd.DataFrame(columns=cols)
+        df_all = pd.DataFrame(trades)
+        df_all["entry_date"] = pd.to_datetime(df_all["entry_date"])
+        df_all["exit_date"] = pd.to_datetime(df_all["exit_date"])
+        return df_all.sort_values("entry_date").reset_index(drop=True)
+
+    def split(df_all):
+        train_mask = (df_all["entry_date"] >= pd.Timestamp(TRAIN_START)) & (df_all["entry_date"] <= pd.Timestamp(TRAIN_END))
+        valid_mask = (df_all["entry_date"] >= pd.Timestamp(VALID_START)) & (df_all["entry_date"] <= pd.Timestamp(VALID_END))
+        return df_all[train_mask].reset_index(drop=True), df_all[valid_mask].reset_index(drop=True)
+
+    lines = [
+        "=== Pullback進場條件收緊 sweep（固定用全部股票池、單一倉位25%，淨係換Pullback嫁volume_drying門檻，現時default=0.65） ===",
+    ]
+    cache_train, cache_valid, train_rows = {}, {}, []
+    for vmax in PULLBACK_VOLUME_SWEEP:
+        df_all = build_trades_df(vmax)
+        train_df, valid_df = split(df_all)
+        cache_train[vmax], cache_valid[vmax] = train_df, valid_df
+        pb_theo = theoretical_stats(train_df[train_df["strategy"] == "Pullback (回踩)"])
+        train_result = apply_fixed_size(train_df, INITIAL_CAPITAL, PULLBACK_SWEEP_FIXED_SIZE)
+        if train_result is not None:
+            train_rows.append((vmax, train_result["cagr"]))
+            lines.append(f"　volume_drying_max={vmax:.2f}：Pullback訊號{pb_theo['total']}次"
+                          f"(勝率{pb_theo['strict_wr']:.1f}%,期望值{pb_theo['expectancy']:+.2f}%)，"
+                          f"全組合CAGR {train_result['cagr']:+.2f}%，開倉{train_result['taken']}/{len(train_df)}次")
+
+    if not train_rows:
+        lines.append("⚠️ Sweep失敗，訓練期冇足夠數據")
+        return {"lines": lines, "valid_result": None}
+
+    best_vmax, best_train_cagr = max(train_rows, key=lambda x: x[1])
+    lines.append(f"👉 訓練期揀出嘅最佳volume_drying_max：{best_vmax:.2f}（CAGR {best_train_cagr:+.2f}%）——呢個門檻會攞去驗證期做出樣本外測試")
+
+    valid_df_best = cache_valid[best_vmax]
+    valid_result = apply_fixed_size(valid_df_best, INITIAL_CAPITAL, PULLBACK_SWEEP_FIXED_SIZE)
+    pb_valid_theo = theoretical_stats(valid_df_best[valid_df_best["strategy"] == "Pullback (回踩)"])
+    if valid_result is not None:
+        lines.append(f"👉 用訓練期揀嘅門檻{best_vmax:.2f}，喺驗證期（出樣本外）：CAGR {valid_result['cagr']:+.2f}%，"
+                      f"Pullback訊號{pb_valid_theo['total']}次(勝率{pb_valid_theo['strict_wr']:.1f}%,期望值{pb_valid_theo['expectancy']:+.2f}%)")
+    else:
+        lines.append("⚠️ 驗證期冇足夠交易訊號")
+
+    baseline_valid_df = cache_valid.get(0.65)
+    if baseline_valid_df is not None:
+        baseline_result = apply_fixed_size(baseline_valid_df, INITIAL_CAPITAL, PULLBACK_SWEEP_FIXED_SIZE)
+        if baseline_result is not None:
+            lines.append(f"（對照：現時default門檻0.65喺驗證期嫁CAGR {baseline_result['cagr']:+.2f}%——同上面「全部股票池，單一倉位%」驗證期數字應該一致，方便互相對照）")
+
+    lines.append("--- 參考（唔應該用嚫揀參數！純粹量度過擬合風險）：如果直接用驗證期自己數據揀最啱門檻 ---")
+    valid_rows = []
+    for vmax in PULLBACK_VOLUME_SWEEP:
+        r = apply_fixed_size(cache_valid[vmax], INITIAL_CAPITAL, PULLBACK_SWEEP_FIXED_SIZE)
+        if r is not None:
+            valid_rows.append((vmax, r["cagr"]))
+            lines.append(f"　volume_drying_max={vmax:.2f}：CAGR {r['cagr']:+.2f}%")
+    if valid_rows and valid_result is not None:
+        own_best_vmax, own_best_cagr = max(valid_rows, key=lambda x: x[1])
+        gap = own_best_cagr - valid_result["cagr"]
+        lines.append(f"（驗證期自選最佳CAGR {own_best_cagr:+.2f}%(門檻{own_best_vmax:.2f}) vs 誠實出樣本外CAGR {valid_result['cagr']:+.2f}%，"
+                      f"差距{gap:+.2f}個百分點）")
+
+    return {"lines": lines, "best_vmax": best_vmax, "valid_result": valid_result}
+
+
 def run_backtest():
     print("正在下載大盤 SPY 數據建立環境濾網...")
     spy_filter = get_spy_data()
@@ -479,12 +570,15 @@ def run_backtest():
 
     print(f"\n準備掃描 {len(WATCHLIST)} 隻股票 (Mega Cap + High Beta)...")
 
-    all_trades = []
+    data_cache = {}
     for t in WATCHLIST:
         print(f"處理緊 {t}...")
         df = prepare_data(t)
-        if df is None:
-            continue
+        if df is not None:
+            data_cache[t] = df
+
+    all_trades = []
+    for t, df in data_cache.items():
         trades = simulate_trades(df, t, spy_filter)
         if trades:
             print(f" {t} 觸發咗 {len(trades)} 次訊號")
@@ -508,9 +602,14 @@ def run_backtest():
         mega_only_df, "只用 Mega Cap，按策略類型分級(Breakout加碼、Pullback減碼，Mega Cap入面冇High Beta所以組別倍數都係1.0)"
     )
 
+    print("\n開始Pullback進場條件sweep（重用已下載數據，唔會再call yfinance）...")
+    pullback_sweep_result = analyze_pullback_sweep(data_cache, spy_filter)
+
     summary_lines = [
         "=== 回測報告：訓練期揀參數 → 驗證期做Out-of-Sample測試（防過擬合）===",
         f"每段獨立用返 ${INITIAL_CAPITAL:,.2f} 本金起跑（冇槓桿，資金唔夠嘅訊號會被跳過）",
+        "⚠️ Dip_Buy+High Beta已經結構性剔除（見strategy_core.DIP_BUY_EXCLUDED_GROUPS，"
+        "原因同caveat見code comment），下面全部結果都已經反映呢個改動。",
         "",
     ]
     summary_lines += full_result["lines"]
@@ -520,6 +619,8 @@ def run_backtest():
     summary_lines += tiered_result["lines"]
     summary_lines += [""]
     summary_lines += mega_tiered_result["lines"]
+    summary_lines += [""]
+    summary_lines += pullback_sweep_result["lines"]
     summary_lines += [
         "",
         "--- 詳細交易紀錄（下面全部用「全部股票池、單一倉位%」版本；period=訓練/驗證；"
@@ -569,9 +670,12 @@ def run_backtest():
     tiered_cagr_print = f"{tiered_oos['cagr']:+.2f}%" if tiered_oos is not None else "N/A"
     mega_tiered_oos = mega_tiered_result["valid_oos"]
     mega_tiered_cagr_print = f"{mega_tiered_oos['cagr']:+.2f}%" if mega_tiered_oos is not None else "N/A"
-    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本，四種資金分配方式對比）。"
+    pb_valid_result = pullback_sweep_result.get("valid_result")
+    pb_cagr_print = f"{pb_valid_result['cagr']:+.2f}%" if pb_valid_result is not None else "N/A"
+    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本，四種資金分配方式對比 + Pullback進場條件sweep）。"
           f"全部股票池(單一%)：{valid_cagr_print}；Mega-Cap-only(單一%)：{mega_cagr_print}；"
-          f"全部股票池(分級)：{tiered_cagr_print}；Mega-Cap-only(分級)：{mega_tiered_cagr_print}。"
+          f"全部股票池(分級)：{tiered_cagr_print}；Mega-Cap-only(分級)：{mega_tiered_cagr_print}；"
+          f"Pullback收緊進場後(全部股票池、單一25%)：{pb_cagr_print}。"
           f"已存到 backtest_results.csv")
 
 

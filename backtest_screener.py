@@ -257,8 +257,9 @@ def run_backtest():
     cols = ['ticker', 'group', 'strategy', 'entry_date', 'exit_date', 'entry_price', 'exit_price', 'return_pct', 'holding_days', 'exit_reason', 'portfolio_balance']
     final_combined_df = final_combined_df[cols]
 
-final_combined_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
-print(f"\n✅ 資金複利曲線與回報率已整合，已存到 backtest_results.csv")
+    # ⚠️ 關鍵檔名修正：輸出檔名直接設為 backtest_results.csv
+    final_combined_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
+    print(f"\n✅ 資金複利曲線與回報率已整合，已存到 backtest_results.csv")
 
 if __name__ == "__main__":
     run_backtest()

@@ -286,6 +286,55 @@ def apply_fixed_size(df_period, initial_capital, size):
 # ==========================================
 # 第四步：跑回測與生成報告
 # ==========================================
+def analyze_universe(df_all, label):
+    """對一組已經跑出嚟嘅trades(df_all)，做訓練/驗證拆期 + 倉位比例掃描分析。
+    抽出嚟做獨立function，方便可以用相同嘅一批trades，比較「全部股票池」vs「只用Mega Cap」
+    呢類「邊個股票池先靠得住」嘅問題，而唔使重新落yfinance攞多次data。"""
+    train_mask = (df_all["entry_date"] >= pd.Timestamp(TRAIN_START)) & (df_all["entry_date"] <= pd.Timestamp(TRAIN_END))
+    valid_mask = (df_all["entry_date"] >= pd.Timestamp(VALID_START)) & (df_all["entry_date"] <= pd.Timestamp(VALID_END))
+    train_df = df_all[train_mask].reset_index(drop=True)
+    valid_df = df_all[valid_mask].reset_index(drop=True)
+
+    train_theo = theoretical_stats(train_df)
+    valid_theo = theoretical_stats(valid_df)
+
+    train_sweep, train_best_size, train_best_cagr, train_best_df = sweep_sizes(train_df, INITIAL_CAPITAL)
+    valid_oos = apply_fixed_size(valid_df, INITIAL_CAPITAL, train_best_size)
+    valid_sweep_ref, valid_own_best_size, valid_own_best_cagr, _ = sweep_sizes(valid_df, INITIAL_CAPITAL)
+
+    lines = [f"=== {label} ==="]
+    lines.append(f"【訓練期 {TRAIN_START} ~ {TRAIN_END}】訊號 {train_theo['total']} 次，倉位比例掃描結果（由細到大）：")
+    for r in train_sweep:
+        lines.append(f"　倉位{r['size']*100:.0f}%：CAGR {r['cagr']:+.2f}%，最終結餘${r['final_capital']:,.2f}，"
+                      f"開倉{r['taken']}/{train_theo['total']}次(使用率{r['util_pct']:.1f}%)")
+    if train_best_size is not None:
+        lines.append(f"👉 訓練期揀出嘅最佳倉位：{train_best_size*100:.0f}%（CAGR {train_best_cagr:+.2f}%）——呢個size會攞去驗證期做出樣本外測試")
+    lines.append(f"訓練期理論勝率：{train_theo['strict_wr']:.2f}%（撇除打和後約{train_theo['adj_wr']:.2f}%），期望值{train_theo['expectancy']:.2f}%，平均持股{train_theo['avg_hold']:.1f}日")
+    lines.append("")
+    lines.append(f"【驗證期 {VALID_START} ~ {VALID_END}】訊號 {valid_theo['total']} 次")
+    if valid_oos is not None:
+        lines.append(f"👉 用訓練期揀嘅倉位{train_best_size*100:.0f}%，喺驗證期（出樣本外）：CAGR {valid_oos['cagr']:+.2f}%，"
+                      f"最終結餘${valid_oos['final_capital']:,.2f}，開倉{valid_oos['taken']}/{valid_theo['total']}次")
+    else:
+        lines.append("⚠️ 驗證期冇足夠交易訊號，未能計算")
+    lines.append(f"驗證期理論勝率：{valid_theo['strict_wr']:.2f}%（撇除打和後約{valid_theo['adj_wr']:.2f}%），期望值{valid_theo['expectancy']:.2f}%，平均持股{valid_theo['avg_hold']:.1f}日")
+    lines.append("")
+    lines.append("--- 參考（唔應該用嚫揀參數！純粹量度過擬合風險）：如果直接用驗證期自己數據揀最啱size ---")
+    for r in valid_sweep_ref:
+        lines.append(f"　倉位{r['size']*100:.0f}%：CAGR {r['cagr']:+.2f}%")
+    if valid_oos is not None and valid_own_best_cagr is not None:
+        gap = valid_own_best_cagr - valid_oos["cagr"]
+        lines.append(f"（驗證期自選最佳CAGR {valid_own_best_cagr:+.2f}% vs 誠實出樣本外CAGR {valid_oos['cagr']:+.2f}%，"
+                      f"差距{gap:+.2f}個百分點——差距愈大，代表訓練期揀出嘅參數愈可能係撞中咗）")
+
+    return {
+        "label": label, "lines": lines, "train_df": train_df, "valid_df": valid_df,
+        "train_theo": train_theo, "valid_theo": valid_theo,
+        "train_best_size": train_best_size, "train_best_cagr": train_best_cagr,
+        "train_best_df": train_best_df, "valid_oos": valid_oos,
+    }
+
+
 def run_backtest():
     print("正在下載大盤 SPY 數據建立環境濾網...")
     spy_filter = get_spy_data()
@@ -314,68 +363,27 @@ def run_backtest():
     result_df["exit_date"] = pd.to_datetime(result_df["exit_date"])
     result_df = result_df.sort_values("entry_date").reset_index(drop=True)
 
-    # --- 按日期分成訓練期／驗證期，做out-of-sample驗證 ---
-    train_mask = (result_df["entry_date"] >= pd.Timestamp(TRAIN_START)) & (result_df["entry_date"] <= pd.Timestamp(TRAIN_END))
-    valid_mask = (result_df["entry_date"] >= pd.Timestamp(VALID_START)) & (result_df["entry_date"] <= pd.Timestamp(VALID_END))
-    train_df = result_df[train_mask].reset_index(drop=True)
-    valid_df = result_df[valid_mask].reset_index(drop=True)
+    # --- 用同一批已經跑出嚟嘅trades，分別比較「全部股票池」vs「只用Mega Cap(剔除High Beta)」---
+    full_result = analyze_universe(result_df, "全部股票池 (Mega Cap + High Beta)")
+    mega_only_df = result_df[result_df["group"] == "Mega Cap"].reset_index(drop=True)
+    mega_result = analyze_universe(mega_only_df, "只用 Mega Cap (剔除 High Beta)")
 
-    train_theo = theoretical_stats(train_df)
-    valid_theo = theoretical_stats(valid_df)
-
-    # 1) 淨係用訓練期嘅數據揀邊個倉位比例CAGR最高
-    train_sweep, train_best_size, train_best_cagr, train_best_df = sweep_sizes(train_df, INITIAL_CAPITAL)
-
-    # 2) 將訓練期揀出嗰個size，原汁原味攞去驗證期測試（唔再重新揀）—— 呢個先係誠實嘅out-of-sample結果
-    valid_oos = apply_fixed_size(valid_df, INITIAL_CAPITAL, train_best_size)
-
-    # 3) 參考用：純粹show俾你睇，如果「偷雞」直接用驗證期自己揀最啱嗰個size，會係幾多
-    #    （呢個數字唔應該用嚫做實際決策，淨係用嚫量度過擬合風險有幾大）
-    valid_sweep_ref, valid_own_best_size, valid_own_best_cagr, _ = sweep_sizes(valid_df, INITIAL_CAPITAL)
-
-    # --- 組報告 ---
-    summary_data = [
-        {"ticker": "=== 回測報告：訓練期揀參數 → 驗證期做Out-of-Sample測試（防過擬合）==="},
-        {"ticker": f"每段獨立用返 ${INITIAL_CAPITAL:,.2f} 本金起跑（冇槓桿，資金唔夠嘅訊號會被跳過）"},
-        {"ticker": ""},
-        {"ticker": f"【訓練期 {TRAIN_START} ~ {TRAIN_END}】訊號 {train_theo['total']} 次，倉位比例掃描結果（由細到大）："},
+    summary_lines = [
+        "=== 回測報告：訓練期揀參數 → 驗證期做Out-of-Sample測試（防過擬合）===",
+        f"每段獨立用返 ${INITIAL_CAPITAL:,.2f} 本金起跑（冇槓桿，資金唔夠嘅訊號會被跳過）",
+        "",
     ]
-    for r in train_sweep:
-        summary_data.append({
-            "ticker": f"　倉位{r['size']*100:.0f}%：CAGR {r['cagr']:+.2f}%，最終結餘${r['final_capital']:,.2f}，"
-                      f"開倉{r['taken']}/{train_theo['total']}次(使用率{r['util_pct']:.1f}%)"
-        })
-    if train_best_size is not None:
-        summary_data.append({"ticker": f"👉 訓練期揀出嘅最佳倉位：{train_best_size*100:.0f}%（CAGR {train_best_cagr:+.2f}%）——呢個size會攞去驗證期做出樣本外測試"})
-    summary_data += [
-        {"ticker": f"訓練期理論勝率：{train_theo['strict_wr']:.2f}%（撇除打和後約{train_theo['adj_wr']:.2f}%），期望值{train_theo['expectancy']:.2f}%，平均持股{train_theo['avg_hold']:.1f}日"},
-        {"ticker": ""},
-        {"ticker": f"【驗證期 {VALID_START} ~ {VALID_END}】訊號 {valid_theo['total']} 次"},
+    summary_lines += full_result["lines"]
+    summary_lines += [""]
+    summary_lines += mega_result["lines"]
+    summary_lines += [
+        "",
+        "--- 詳細交易紀錄（下面全部用「全部股票池」版本；period=訓練/驗證；"
+        "position_taken=False代表資金不足未開倉；全部用訓練期揀嘅size模擬）---",
     ]
-    if valid_oos is not None:
-        summary_data.append({
-            "ticker": f"👉 用訓練期揀嘅倉位{train_best_size*100:.0f}%，喺驗證期（出樣本外）：CAGR {valid_oos['cagr']:+.2f}%，"
-                      f"最終結餘${valid_oos['final_capital']:,.2f}，開倉{valid_oos['taken']}/{valid_theo['total']}次"
-        })
-    else:
-        summary_data.append({"ticker": "⚠️ 驗證期冇足夠交易訊號，未能計算"})
-    summary_data += [
-        {"ticker": f"驗證期理論勝率：{valid_theo['strict_wr']:.2f}%（撇除打和後約{valid_theo['adj_wr']:.2f}%），期望值{valid_theo['expectancy']:.2f}%，平均持股{valid_theo['avg_hold']:.1f}日"},
-        {"ticker": ""},
-        {"ticker": "--- 參考（唔應該用嚫揀參數！純粹量度過擬合風險）：如果直接用驗證期自己數據揀最啱size ---"},
-    ]
-    for r in valid_sweep_ref:
-        summary_data.append({"ticker": f"　倉位{r['size']*100:.0f}%：CAGR {r['cagr']:+.2f}%"})
-    if valid_oos is not None and valid_own_best_cagr is not None:
-        gap = valid_own_best_cagr - valid_oos["cagr"]
-        summary_data.append({
-            "ticker": f"（驗證期自選最佳CAGR {valid_own_best_cagr:+.2f}% vs 誠實出樣本外CAGR {valid_oos['cagr']:+.2f}%，差距{gap:+.2f}個百分點——差距愈大，代表訓練期揀出嘅參數愈可能係撞中咗，而唔係策略本身咁好）"
-        })
-    summary_data += [
-        {"ticker": ""},
-        {"ticker": "--- 詳細交易紀錄（period=訓練/驗證；position_taken=False代表資金不足未開倉；全部用訓練期揀嘅size模擬）---"},
-    ]
+    summary_data = [{"ticker": line} for line in summary_lines]
 
+    train_best_df, valid_oos = full_result["train_best_df"], full_result["valid_oos"]
     detail_frames = []
     if train_best_df is not None:
         df_t = train_best_df.copy()
@@ -409,9 +417,10 @@ def run_backtest():
 
     final_combined_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
 
+    valid_oos = full_result["valid_oos"]
     valid_cagr_print = f"{valid_oos['cagr']:+.2f}%" if valid_oos is not None else "N/A"
-    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本）。"
-          f"訓練期最佳倉位{train_best_size*100 if train_best_size else 0:.0f}% → 驗證期CAGR {valid_cagr_print}。"
+    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本，加埋Mega-Cap-only對比）。"
+          f"全部股票池：驗證期CAGR {valid_cagr_print}。"
           f"已存到 backtest_results.csv")
 
 

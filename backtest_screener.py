@@ -7,21 +7,22 @@ from strategy_core import (
     check_breakout_signal, 
     check_pullback_signal, 
     check_dip_buying_signal, 
-    MEGA_CAP_TICKERS
+    MEGA_CAP_TICKERS,
+    HIGH_BETA_TICKERS   # 🚀 重新引入妖股
 )
 
 # ==========================================
-# 第一步：股票池與環境設定 (100% 集中於 Mega Cap)
+# 第一步：股票池與環境設定 (Mega Cap + High Beta 混合雙打)
 # ==========================================
-WATCHLIST = MEGA_CAP_TICKERS
+WATCHLIST = MEGA_CAP_TICKERS + HIGH_BETA_TICKERS
 
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
-# 基礎量化風控參數 (具體止盈、止損將在循環內動態分配)
-HOLD_DAYS = 20
-STOP_LOSS_PCT = -0.07
-BREAKEVEN_PCT = 0.05
+# 🚀 暴利模式風控參數 (盈虧比 4:1)
+HOLD_DAYS = 40          # 放大至 40 日，給予股票足夠時間跑出 20% 利潤
+STOP_LOSS_PCT = -0.05   # 止損極度收緊至 -5% (錯了就跑)
+BREAKEVEN_PCT = 0.08    # 獲利 8% 才推平保 (避免被洗盤震出局)
 
 def get_spy_data():
     try:
@@ -41,7 +42,7 @@ def prepare_data(ticker):
     return compute_indicators(df)
 
 # ==========================================
-# 第二步：三引擎同步模擬交易 (差異化止盈版)
+# 第二步：三引擎同步模擬交易 (20% 止盈暴利版)
 # ==========================================
 def simulate_trades(df, ticker, spy_filter):
     trades = []
@@ -52,32 +53,15 @@ def simulate_trades(df, ticker, spy_filter):
         spy_bullish = spy_filter.get(date_idx, True)
         row = df.iloc[i]
         
-        # 將截至當日為止嘅歷史數據切片傳入去
         df_history_up_to_today = df.iloc[:i+1] 
         
-        # 🚦 判斷觸發了哪一個引擎，並設定獨立的風控參數
         strategy = None
-        target_pct = 0.10
-        time_stop_d = 15
-        time_stop_tgt = 0.00
-        
         if check_breakout_signal(row, spy_bullish):
             strategy = "Breakout (突破)"
-            target_pct = 0.10          # 突破氣勢如虹，看 10%
-            time_stop_d = 10           # 10日內沒動靜就走
-            time_stop_tgt = 0.03       # 必須有實質利潤 (+3%)
-            
         elif check_pullback_signal(row, spy_bullish, df_history_up_to_today):
             strategy = "Pullback (回踩)"
-            target_pct = 0.05          # 🚀 改變命運的關鍵：吃 5% 波段反彈就走！
-            time_stop_d = 15           # 築底需要時間
-            time_stop_tgt = 0.00       # 15日不虧損可繼續持有
-            
         elif check_dip_buying_signal(row, df_history_up_to_today):
             strategy = "Dip_Buy (撈底)"
-            target_pct = 0.08          # 恐慌後反彈幅度較大，看 8%
-            time_stop_d = 15
-            time_stop_tgt = 0.00
 
         if strategy:
             entry_price = df["Open"].iloc[i + 1]
@@ -85,8 +69,12 @@ def simulate_trades(df, ticker, spy_filter):
             exit_price, exit_date, exit_reason = None, None, "持有到期"
 
             current_stop_price = entry_price * (1 + STOP_LOSS_PCT)
-            target_price = entry_price * (1 + target_pct) # 動態止盈價
+            target_price = entry_price * (1 + 0.20)  # 🚀 所有策略統一挑戰 20% 止盈
             breakeven_trigger = entry_price * (1 + BREAKEVEN_PCT)
+
+            # 時間止損放寬，容許更多時間洗盤
+            time_stop_d = 15
+            time_stop_tgt = 0.00 
 
             for j in range(i + 1, min(i + 1 + HOLD_DAYS, n)):
                 day_open = df["Open"].iloc[j]
@@ -99,22 +87,20 @@ def simulate_trades(df, ticker, spy_filter):
                 stop_hit = day_low <= current_stop_price
                 target_hit = day_high >= target_price
 
-                # 1. 觸發止盈/止損/保本
                 if stop_hit and target_hit:
                     exit_price = min(day_open, current_stop_price)
                     exit_date, exit_reason = df.index[j], "同日雙穿(保守判定止損)"
                     break
                 elif stop_hit:
                     exit_price = min(day_open, current_stop_price)
-                    reason_text = "保本離場" if current_stop_price == entry_price else "觸發止損"
+                    reason_text = "保本離場" if current_stop_price == entry_price else "觸發止損(-5%)"
                     exit_date, exit_reason = df.index[j], reason_text
                     break
                 elif target_hit:
                     exit_price = target_price
-                    exit_date, exit_reason = df.index[j], "觸發止盈"
+                    exit_date, exit_reason = df.index[j], "觸發止盈(+20%)"
                     break
 
-                # 2. 動態時間止損判斷
                 if trading_days_held == time_stop_d:
                     current_return = (day_close - entry_price) / entry_price
                     if current_return < time_stop_tgt:
@@ -122,7 +108,6 @@ def simulate_trades(df, ticker, spy_filter):
                         exit_date, exit_reason = df.index[j], f"時間止損(未達+{time_stop_tgt*100:.0f}%)"
                         break
 
-                # 3. 保本線上移
                 if day_high >= breakeven_trigger and current_stop_price < entry_price:
                     current_stop_price = entry_price
 
@@ -132,9 +117,13 @@ def simulate_trades(df, ticker, spy_filter):
 
             ret_pct = (exit_price - entry_price) / entry_price
             holding_days_calendar = (exit_date - entry_date).days
+            
+            # 區分係咪 High Beta
+            group_tag = "High Beta" if ticker in HIGH_BETA_TICKERS else "Mega Cap"
 
             trades.append({
                 "ticker": ticker,
+                "group": group_tag,  # 📊 新增：記錄所屬組別
                 "strategy": strategy,
                 "entry_date": entry_date.date(),
                 "entry_price": round(float(entry_price), 2),
@@ -159,7 +148,7 @@ def run_backtest():
     if spy_filter.empty: print("⚠️ 警告：SPY濾網未能建立")
 
     print(f"\n======================================")
-    print(f"準備掃描 MEGA_CAP 組別的 {len(WATCHLIST)} 隻巨無霸...")
+    print(f"準備掃描 {len(WATCHLIST)} 隻股票 (Mega Cap + High Beta)...")
     print(f"======================================")
 
     all_trades = []
@@ -204,11 +193,22 @@ def run_backtest():
         else:
             strat_summary.append({"ticker": f" {strat} 無觸發紀錄"})
 
+    # 📊 比較 Mega Cap vs High Beta
+    group_summary = []
+    for grp in ["Mega Cap", "High Beta"]:
+        grp_df = result_df[result_df["group"] == grp]
+        if len(grp_df) > 0:
+            g_wins = len(grp_df[grp_df["return_pct"] > 0])
+            g_losses = len(grp_df[grp_df["return_pct"] < 0])
+            g_rate = (g_wins / (g_wins + g_losses)) * 100 if (g_wins + g_losses) > 0 else 0
+            g_ev = (g_wins/len(grp_df) * grp_df[grp_df["return_pct"] > 0]["return_pct"].mean()) + (g_losses/len(grp_df) * grp_df[grp_df["return_pct"] < 0]["return_pct"].mean()) if len(grp_df) > 0 else 0
+            group_summary.append({"ticker": f" {grp} 勝率 {g_rate:.1f}% | 期望值 {g_ev:.2f}%"})
+
     reason_counts = result_df["exit_reason"].value_counts()
     reason_lines = [{"ticker": f" {reason}：{count} 次"} for reason, count in reason_counts.items()]
 
     summary_data = [
-        {"ticker": f"=== MEGA CAP 終極狙擊手回測總結 ==="},
+        {"ticker": f"=== 全天候暴利模式 (20%止盈 / -5%止損) 回測總結 ==="},
         {"ticker": f"總交易次數：{total_trades} 次"},
         {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次"},
         {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）"},
@@ -216,6 +216,9 @@ def run_backtest():
         {"ticker": f"平均輸單虧損：{avg_loss:.2f}%"},
         {"ticker": f"期望值（每注平均）：{expectancy:.2f}%"},
         {"ticker": f"平均持股日數：{avg_holding_days:.1f} 日"},
+        {"ticker": ""},
+        {"ticker": "各組別表現比較："},
+        *group_summary,
         {"ticker": ""},
         {"ticker": "各引擎表現拆解："},
         *strat_summary,
@@ -227,13 +230,13 @@ def run_backtest():
     ]
     
     for d in summary_data:
-        for k in ["strategy", "entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "holding_days", "exit_reason"]:
+        for k in ["group", "strategy", "entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "holding_days", "exit_reason"]:
             if k not in d: d[k] = ""
 
     summary_df = pd.DataFrame(summary_data)
     final_combined_df = pd.concat([summary_df, result_df], ignore_index=True)
     final_combined_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
-    print("\n✅ 三引擎終極詳細交易紀錄已整合並存到 backtest_results.csv")
+    print("\n✅ 暴利模式詳細交易紀錄已整合並存到 backtest_results.csv")
 
 if __name__ == "__main__":
     run_backtest()

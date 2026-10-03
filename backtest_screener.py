@@ -20,13 +20,26 @@ WATCHLIST = MEGA_CAP_TICKERS + HIGH_BETA_TICKERS
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
+# 🧪 訓練期 / 驗證期分段（out-of-sample驗證，防止為咗追一個CAGR數字而過擬合）：
+# 淨係用訓練期嘅數據去揀邊個倉位比例最好，再原汁原味攞去驗證期測試，
+# 驗證期嘅表現先係對策略「真實」靠唔靠得住嘅誠實檢查
+TRAIN_START, TRAIN_END = "2023-01-01", "2024-12-31"
+VALID_START, VALID_END = "2025-01-01", END_DATE
+
 HOLD_DAYS = 40
 STOP_LOSS_PCT = -0.05
 BREAKEVEN_PCT = 0.08
 
+# 🎯 浮動止賺（trailing stop）：獲利升到 TRAILING_TRIGGER_PCT 之後，
+# 唔再硬性鎖定喺某個固定%數離場，淨係由最高位回落 TRAILING_PULLBACK_PCT 先沽
+# （即係：賺夠20%之後，由高點跌1%就即刻走，盡量「捕捉」後面仲可能有嘅升幅）
+TRAILING_TRIGGER_PCT = 0.20
+TRAILING_PULLBACK_PCT = 0.01
+
 # 🚀 資金管理參數 —— 本金 $80,000，冇槓桿
 INITIAL_CAPITAL = 80000.0
-POSITION_SIZE_PCT = 0.20  # 每注動用「總資產」嘅20%，但受限於實際可用現金
+# 一次過掃描幾個唔同嘅倉位比例，唔使再逐個改數字、逐次重新部署先知結果
+POSITION_SIZE_SWEEP = [0.05, 0.10, 0.15, 0.20, 0.25]
 
 
 def get_spy_data():
@@ -77,9 +90,12 @@ def simulate_trades(df, ticker, spy_filter):
             exit_price, exit_date, exit_reason = None, None, "持有到期"
 
             current_stop_price = entry_price * (1 + STOP_LOSS_PCT)
-            target_price = entry_price * (1 + 0.20)
             breakeven_trigger = entry_price * (1 + BREAKEVEN_PCT)
+            trailing_trigger_price = entry_price * (1 + TRAILING_TRIGGER_PCT)
             time_stop_d, time_stop_tgt = 15, 0.00
+
+            peak_price = entry_price      # 持倉期間見過嘅最高位
+            trailing_active = False       # 有冇已經升穿 +20%，進入浮動止賺階段
 
             for j in range(i + 1, min(i + 1 + HOLD_DAYS, n)):
                 day_open = df["Open"].iloc[j]
@@ -88,21 +104,29 @@ def simulate_trades(df, ticker, spy_filter):
                 day_close = df["Close"].iloc[j]
                 trading_days_held = j - (i + 1)
 
-                stop_hit = day_low <= current_stop_price
-                target_hit = day_high >= target_price
+                # 先用今日高位更新歷史最高位（保守做法：假設創新高同跌穿停損可以同一日發生）
+                peak_price = max(peak_price, day_high)
+                if not trailing_active and peak_price >= trailing_trigger_price:
+                    trailing_active = True
 
-                if stop_hit and target_hit:
-                    exit_price = min(day_open, current_stop_price)
-                    exit_date, exit_reason = df.index[j], "同日雙穿(保守判定止損)"
-                    break
-                elif stop_hit:
-                    exit_price = min(day_open, current_stop_price)
-                    reason_text = "保本離場" if current_stop_price == entry_price else f"觸發止損({STOP_LOSS_PCT*100:.0f}%)"
+                if trailing_active:
+                    # 進入浮動止賺後，實際生效嘅停損價 = max(原有止蝕/保本價, 由最高位回落1%)
+                    trailing_stop_price = peak_price * (1 - TRAILING_PULLBACK_PCT)
+                    effective_stop_price = max(current_stop_price, trailing_stop_price)
+                else:
+                    effective_stop_price = current_stop_price
+
+                stop_hit = day_low <= effective_stop_price
+
+                if stop_hit:
+                    exit_price = min(day_open, effective_stop_price)
+                    if trailing_active:
+                        reason_text = f"浮動止賺離場(由高點${peak_price:.2f}回落{TRAILING_PULLBACK_PCT*100:.0f}%)"
+                    elif current_stop_price == entry_price:
+                        reason_text = "保本離場"
+                    else:
+                        reason_text = f"觸發止損({STOP_LOSS_PCT*100:.0f}%)"
                     exit_date, exit_reason = df.index[j], reason_text
-                    break
-                elif target_hit:
-                    exit_price = target_price
-                    exit_date, exit_reason = df.index[j], "觸發止盈(+20%)"
                     break
 
                 if trading_days_held == time_stop_d:
@@ -112,7 +136,8 @@ def simulate_trades(df, ticker, spy_filter):
                         exit_date, exit_reason = df.index[j], f"時間止損(未達+{time_stop_tgt*100:.0f}%)"
                         break
 
-                if day_high >= breakeven_trigger and current_stop_price < entry_price:
+                # 浮動止賺未觸發之前，先用原本嘅保本機制（升到BREAKEVEN_PCT就將停損提到入場價）
+                if not trailing_active and day_high >= breakeven_trigger and current_stop_price < entry_price:
                     current_stop_price = entry_price
 
             if exit_price is None:
@@ -192,6 +217,73 @@ def simulate_portfolio_with_capital_limit(result_df, initial_capital, position_s
 
 
 # ==========================================
+# 第三.五步：訓練/驗證輔助函數（out-of-sample驗證）
+# ==========================================
+def theoretical_stats(df):
+    """唔受資金限制嘅理論勝率/期望值，純粹反映訊號質素（唔講緊實際開唔開到倉）。"""
+    total = len(df)
+    if total == 0:
+        return dict(total=0, wins=0, losses=0, bes=0, strict_wr=0.0, adj_wr=0.0,
+                     avg_win=0.0, avg_loss=0.0, expectancy=0.0, avg_hold=0.0)
+    win = df[df["return_pct"] > 0]
+    lose = df[df["return_pct"] < 0]
+    be = df[df["return_pct"] == 0]
+    wins, losses, bes = len(win), len(lose), len(be)
+    strict_wr = wins / total * 100
+    adj_wr = wins / (wins + losses) * 100 if (wins + losses) else 0.0
+    avg_win = win["return_pct"].mean() if wins else 0.0
+    avg_loss = lose["return_pct"].mean() if losses else 0.0
+    expectancy = (strict_wr / 100 * avg_win) + (losses / total * avg_loss)
+    avg_hold = df["holding_days"].mean()
+    return dict(total=total, wins=wins, losses=losses, bes=bes, strict_wr=strict_wr, adj_wr=adj_wr,
+                avg_win=avg_win, avg_loss=avg_loss, expectancy=expectancy, avg_hold=avg_hold)
+
+
+def sweep_sizes(df_period, initial_capital):
+    """喺一段期間入面，獨立（自己嗰段用返$initial_capital起跑）掃描POSITION_SIZE_SWEEP，揀CAGR最高嗰個。"""
+    total = len(df_period)
+    if total == 0:
+        return [], None, None, None
+    start_dt, end_dt = df_period["entry_date"].min(), df_period["exit_date"].max()
+    years = (end_dt - start_dt).days / 365.25
+    results, best_size, best_cagr, best_df = [], None, None, None
+    for size in POSITION_SIZE_SWEEP:
+        df_sim, final_cap, skipped, _ = simulate_portfolio_with_capital_limit(df_period.copy(), initial_capital, size)
+        taken = total - skipped
+        cagr = (
+            ((final_cap / initial_capital) ** (1 / years) - 1) * 100
+            if years > 0 else ((final_cap - initial_capital) / initial_capital) * 100
+        )
+        results.append({
+            "size": size, "final_capital": final_cap, "cagr": cagr,
+            "taken": taken, "skipped": skipped, "util_pct": taken / total * 100,
+        })
+        if best_cagr is None or cagr > best_cagr:
+            best_cagr, best_size, best_df = cagr, size, df_sim
+    return results, best_size, best_cagr, best_df
+
+
+def apply_fixed_size(df_period, initial_capital, size):
+    """用一個已經喺其他期間揀定嘅size,原汁原味放落呢段期間跑一次(唔會喺呢段再重新揀size，避免過擬合)。"""
+    total = len(df_period)
+    if total == 0 or size is None:
+        return None
+    start_dt, end_dt = df_period["entry_date"].min(), df_period["exit_date"].max()
+    years = (end_dt - start_dt).days / 365.25
+    df_sim, final_cap, skipped, _ = simulate_portfolio_with_capital_limit(df_period.copy(), initial_capital, size)
+    taken = total - skipped
+    cagr = (
+        ((final_cap / initial_capital) ** (1 / years) - 1) * 100
+        if years > 0 else ((final_cap - initial_capital) / initial_capital) * 100
+    )
+    return {
+        "size": size, "final_capital": final_cap, "cagr": cagr, "taken": taken,
+        "skipped": skipped, "util_pct": taken / total * 100 if total else 0.0,
+        "years": years, "sim_df": df_sim,
+    }
+
+
+# ==========================================
 # 第四步：跑回測與生成報告
 # ==========================================
 def run_backtest():
@@ -222,73 +314,105 @@ def run_backtest():
     result_df["exit_date"] = pd.to_datetime(result_df["exit_date"])
     result_df = result_df.sort_values("entry_date").reset_index(drop=True)
 
-    # --- 理論勝率/期望值：假設每個訊號都做到（唔受資金限制），反映策略本身嘅質素 ---
-    total_trades = len(result_df)
-    win_trades = result_df[result_df["return_pct"] > 0]
-    lose_trades = result_df[result_df["return_pct"] < 0]
-    be_trades = result_df[result_df["return_pct"] == 0]
-    wins, losses, bes = len(win_trades), len(lose_trades), len(be_trades)
-    strict_win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
-    adj_win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
-    avg_win = win_trades["return_pct"].mean() if wins > 0 else 0
-    avg_loss = lose_trades["return_pct"].mean() if losses > 0 else 0
-    expectancy = (strict_win_rate / 100 * avg_win) + ((losses / total_trades) * avg_loss) if total_trades > 0 else 0
-    avg_holding_days = result_df["holding_days"].mean() if total_trades > 0 else 0
+    # --- 按日期分成訓練期／驗證期，做out-of-sample驗證 ---
+    train_mask = (result_df["entry_date"] >= pd.Timestamp(TRAIN_START)) & (result_df["entry_date"] <= pd.Timestamp(TRAIN_END))
+    valid_mask = (result_df["entry_date"] >= pd.Timestamp(VALID_START)) & (result_df["entry_date"] <= pd.Timestamp(VALID_END))
+    train_df = result_df[train_mask].reset_index(drop=True)
+    valid_df = result_df[valid_mask].reset_index(drop=True)
 
-    # --- 實際資金曲線：有$80,000上限、冇槓桿、資金唔夠就跳過 ---
-    result_df, final_capital, skipped_count, _ = simulate_portfolio_with_capital_limit(
-        result_df, INITIAL_CAPITAL, POSITION_SIZE_PCT
-    )
-    taken_count = total_trades - skipped_count
+    train_theo = theoretical_stats(train_df)
+    valid_theo = theoretical_stats(valid_df)
 
-    total_return_pct = ((final_capital - INITIAL_CAPITAL) / INITIAL_CAPITAL) * 100
-    start_dt, end_dt = result_df["entry_date"].min(), result_df["exit_date"].max()
-    years_invested = (end_dt - start_dt).days / 365.25
-    annualized_return_pct = (
-        ((final_capital / INITIAL_CAPITAL) ** (1 / years_invested) - 1) * 100
-        if years_invested > 0 else total_return_pct
-    )
+    # 1) 淨係用訓練期嘅數據揀邊個倉位比例CAGR最高
+    train_sweep, train_best_size, train_best_cagr, train_best_df = sweep_sizes(train_df, INITIAL_CAPITAL)
 
-    result_df["entry_date"] = result_df["entry_date"].dt.strftime("%Y-%m-%d")
-    result_df["exit_date"] = result_df["exit_date"].dt.strftime("%Y-%m-%d")
+    # 2) 將訓練期揀出嗰個size，原汁原味攞去驗證期測試（唔再重新揀）—— 呢個先係誠實嘅out-of-sample結果
+    valid_oos = apply_fixed_size(valid_df, INITIAL_CAPITAL, train_best_size)
 
+    # 3) 參考用：純粹show俾你睇，如果「偷雞」直接用驗證期自己揀最啱嗰個size，會係幾多
+    #    （呢個數字唔應該用嚫做實際決策，淨係用嚫量度過擬合風險有幾大）
+    valid_sweep_ref, valid_own_best_size, valid_own_best_cagr, _ = sweep_sizes(valid_df, INITIAL_CAPITAL)
+
+    # --- 組報告 ---
     summary_data = [
-        {"ticker": "=== 回測報告（有資金上限、冇槓桿版本）==="},
-        {"ticker": f"模擬起始本金：${INITIAL_CAPITAL:,.2f}（每注目標動用總資產嘅{POSITION_SIZE_PCT*100:.0f}%，但唔會透支）"},
-        {"ticker": f"模擬最終結餘：${final_capital:,.2f}"},
-        {"ticker": f"總體回報率：+{total_return_pct:,.2f}%" if total_return_pct >= 0 else f"總體回報率：{total_return_pct:,.2f}%"},
-        {"ticker": f"年化回報率(CAGR)：+{annualized_return_pct:,.2f}%（歷時{years_invested:.1f}年）" if annualized_return_pct >= 0 else f"年化回報率(CAGR)：{annualized_return_pct:,.2f}%（歷時{years_invested:.1f}年）"},
+        {"ticker": "=== 回測報告：訓練期揀參數 → 驗證期做Out-of-Sample測試（防過擬合）==="},
+        {"ticker": f"每段獨立用返 ${INITIAL_CAPITAL:,.2f} 本金起跑（冇槓桿，資金唔夠嘅訊號會被跳過）"},
         {"ticker": ""},
-        {"ticker": f"系統總共發出 {total_trades} 次訊號，當中 {taken_count} 次實際開到倉，{skipped_count} 次因資金唔夠被跳過"},
-        {"ticker": f"（資金使用率：{taken_count/total_trades*100:.1f}%——呢個比例愈低，代表$80,000呢個本金愈係跟唔上訊號流量，是真實嘅資金瓶頸）"},
-        {"ticker": ""},
-        {"ticker": "--- 下面係「理論」勝率/期望值，假設每個訊號都做到（唔受資金限制） ---"},
-        {"ticker": f"總交易次數：{total_trades} 次"},
-        {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次"},
-        {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）"},
-        {"ticker": f"平均贏單利潤：+{avg_win:.2f}%"},
-        {"ticker": f"平均輸單虧損：{avg_loss:.2f}%"},
-        {"ticker": f"期望值（每注平均）：{expectancy:.2f}%"},
-        {"ticker": f"平均持股日數：{avg_holding_days:.1f} 日"},
-        {"ticker": ""},
-        {"ticker": "--- 詳細交易紀錄（position_taken=False 代表呢注因資金不足未能實際開倉）---"},
+        {"ticker": f"【訓練期 {TRAIN_START} ~ {TRAIN_END}】訊號 {train_theo['total']} 次，倉位比例掃描結果（由細到大）："},
     ]
+    for r in train_sweep:
+        summary_data.append({
+            "ticker": f"　倉位{r['size']*100:.0f}%：CAGR {r['cagr']:+.2f}%，最終結餘${r['final_capital']:,.2f}，"
+                      f"開倉{r['taken']}/{train_theo['total']}次(使用率{r['util_pct']:.1f}%)"
+        })
+    if train_best_size is not None:
+        summary_data.append({"ticker": f"👉 訓練期揀出嘅最佳倉位：{train_best_size*100:.0f}%（CAGR {train_best_cagr:+.2f}%）——呢個size會攞去驗證期做出樣本外測試"})
+    summary_data += [
+        {"ticker": f"訓練期理論勝率：{train_theo['strict_wr']:.2f}%（撇除打和後約{train_theo['adj_wr']:.2f}%），期望值{train_theo['expectancy']:.2f}%，平均持股{train_theo['avg_hold']:.1f}日"},
+        {"ticker": ""},
+        {"ticker": f"【驗證期 {VALID_START} ~ {VALID_END}】訊號 {valid_theo['total']} 次"},
+    ]
+    if valid_oos is not None:
+        summary_data.append({
+            "ticker": f"👉 用訓練期揀嘅倉位{train_best_size*100:.0f}%，喺驗證期（出樣本外）：CAGR {valid_oos['cagr']:+.2f}%，"
+                      f"最終結餘${valid_oos['final_capital']:,.2f}，開倉{valid_oos['taken']}/{valid_theo['total']}次"
+        })
+    else:
+        summary_data.append({"ticker": "⚠️ 驗證期冇足夠交易訊號，未能計算"})
+    summary_data += [
+        {"ticker": f"驗證期理論勝率：{valid_theo['strict_wr']:.2f}%（撇除打和後約{valid_theo['adj_wr']:.2f}%），期望值{valid_theo['expectancy']:.2f}%，平均持股{valid_theo['avg_hold']:.1f}日"},
+        {"ticker": ""},
+        {"ticker": "--- 參考（唔應該用嚫揀參數！純粹量度過擬合風險）：如果直接用驗證期自己數據揀最啱size ---"},
+    ]
+    for r in valid_sweep_ref:
+        summary_data.append({"ticker": f"　倉位{r['size']*100:.0f}%：CAGR {r['cagr']:+.2f}%"})
+    if valid_oos is not None and valid_own_best_cagr is not None:
+        gap = valid_own_best_cagr - valid_oos["cagr"]
+        summary_data.append({
+            "ticker": f"（驗證期自選最佳CAGR {valid_own_best_cagr:+.2f}% vs 誠實出樣本外CAGR {valid_oos['cagr']:+.2f}%，差距{gap:+.2f}個百分點——差距愈大，代表訓練期揀出嘅參數愈可能係撞中咗，而唔係策略本身咁好）"
+        })
+    summary_data += [
+        {"ticker": ""},
+        {"ticker": "--- 詳細交易紀錄（period=訓練/驗證；position_taken=False代表資金不足未開倉；全部用訓練期揀嘅size模擬）---"},
+    ]
+
+    detail_frames = []
+    if train_best_df is not None:
+        df_t = train_best_df.copy()
+        df_t["period"] = "訓練期"
+        detail_frames.append(df_t)
+    if valid_oos is not None:
+        df_v = valid_oos["sim_df"].copy()
+        df_v["period"] = "驗證期"
+        detail_frames.append(df_v)
+
+    if detail_frames:
+        detail_df = pd.concat(detail_frames, ignore_index=True)
+        detail_df["entry_date"] = pd.to_datetime(detail_df["entry_date"]).dt.strftime("%Y-%m-%d")
+        detail_df["exit_date"] = pd.to_datetime(detail_df["exit_date"]).dt.strftime("%Y-%m-%d")
+    else:
+        detail_df = pd.DataFrame(columns=["ticker", "group", "strategy", "entry_date", "exit_date",
+                                           "entry_price", "exit_price", "return_pct", "holding_days",
+                                           "exit_reason", "position_taken", "period"])
 
     for d in summary_data:
         for k in ["group", "strategy", "entry_date", "entry_price", "exit_date", "exit_price",
-                  "return_pct", "holding_days", "exit_reason", "position_taken"]:
+                  "return_pct", "holding_days", "exit_reason", "position_taken", "period"]:
             if k not in d:
                 d[k] = ""
 
     summary_df = pd.DataFrame(summary_data)
-    final_combined_df = pd.concat([summary_df, result_df], ignore_index=True)
+    final_combined_df = pd.concat([summary_df, detail_df], ignore_index=True)
     cols = ["ticker", "group", "strategy", "entry_date", "exit_date", "entry_price", "exit_price",
-            "return_pct", "holding_days", "exit_reason", "position_taken"]
+            "return_pct", "holding_days", "exit_reason", "position_taken", "period"]
     final_combined_df = final_combined_df[cols]
 
     final_combined_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
-    print(f"\n✅ 已完成（有資金上限版本），最終結餘 ${final_capital:,.2f}，"
-          f"{taken_count}/{total_trades} 注實際開到倉。已存到 backtest_results.csv")
+
+    valid_cagr_print = f"{valid_oos['cagr']:+.2f}%" if valid_oos is not None else "N/A"
+    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本）。"
+          f"訓練期最佳倉位{train_best_size*100 if train_best_size else 0:.0f}% → 驗證期CAGR {valid_cagr_print}。"
+          f"已存到 backtest_results.csv")
 
 
 if __name__ == "__main__":

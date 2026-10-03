@@ -2,25 +2,29 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 
-from strategy_core import compute_indicators, check_breakout_signal, MEGA_CAP_TICKERS, HIGH_BETA_TICKERS
+from strategy_core import (
+    compute_indicators, 
+    check_breakout_signal, 
+    check_pullback_signal, 
+    check_dip_buying_signal, 
+    MEGA_CAP_TICKERS
+)
 
 # ==========================================
-# 第一步：股票池與環境設定
+# 第一步：股票池與環境設定 (100% 集中於 Mega Cap)
 # ==========================================
-TICKER_GROUPS = {
-    "MEGA_CAP (傳統巨無霸與穩健增長)": MEGA_CAP_TICKERS,
-    "HIGH_BETA (高動能與投機性科技股)": HIGH_BETA_TICKERS,
-}
+WATCHLIST = MEGA_CAP_TICKERS
 
 START_DATE = "2023-01-01"
 END_DATE = "2026-09-30"
 
+# 量化風控參數
 HOLD_DAYS = 20
 STOP_LOSS_PCT = -0.07
 TARGET_PCT = 0.10
 BREAKEVEN_PCT = 0.05
-TIME_STOP_DAYS = 10     # 🚀 新增：時間止損日數 (交易日)
-TIME_STOP_TARGET = 0.03 # 🚀 新增：時間止損最低要求利潤 (+3%)
+TIME_STOP_DAYS = 10     # 時間止損日數 (交易日)
+TIME_STOP_TARGET = 0.03 # 時間止損最低要求利潤 (+3%)
 
 def get_spy_data():
     try:
@@ -39,6 +43,9 @@ def prepare_data(ticker):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     return compute_indicators(df)
 
+# ==========================================
+# 第二步：三引擎同步模擬交易
+# ==========================================
 def simulate_trades(df, ticker, spy_filter):
     trades = []
     i, n = 0, len(df)
@@ -46,9 +53,18 @@ def simulate_trades(df, ticker, spy_filter):
     while i < n - HOLD_DAYS - 1:
         date_idx = df.index[i]
         spy_bullish = spy_filter.get(date_idx, True)
-
         row = df.iloc[i]
+        
+        # 🚦 判斷觸發了哪一個引擎
+        strategy = None
         if check_breakout_signal(row, spy_bullish):
+            strategy = "Breakout (突破)"
+        elif check_pullback_signal(row, spy_bullish, df):
+            strategy = "Pullback (回踩)"
+        elif check_dip_buying_signal(row):
+            strategy = "Dip_Buy (撈底)"
+
+        if strategy:
             entry_price = df["Open"].iloc[i + 1]
             entry_date = df.index[i + 1]
             exit_price, exit_date, exit_reason = None, None, "持有到期"
@@ -83,7 +99,7 @@ def simulate_trades(df, ticker, spy_filter):
                     exit_date, exit_reason = df.index[j], "觸發止盈"
                     break
 
-                # 2. 🚀 時間止損判斷：如果揸到第 10 日，收市依然無 +3% 利潤，即斬！
+                # 2. 時間止損判斷 (10日未達3%利潤即斬)
                 if trading_days_held == TIME_STOP_DAYS:
                     current_return = (day_close - entry_price) / entry_price
                     if current_return < TIME_STOP_TARGET:
@@ -91,7 +107,7 @@ def simulate_trades(df, ticker, spy_filter):
                         exit_date, exit_reason = df.index[j], f"時間止損(未達+{TIME_STOP_TARGET*100:.0f}%)"
                         break
 
-                # 3. 每日收市後評估保本線上移
+                # 3. 保本線上移
                 if day_high >= breakeven_trigger and current_stop_price < entry_price:
                     current_stop_price = entry_price
 
@@ -100,16 +116,17 @@ def simulate_trades(df, ticker, spy_filter):
                 exit_price, exit_date = df["Close"].iloc[last_j], df.index[last_j]
 
             ret_pct = (exit_price - entry_price) / entry_price
-            holding_days_calendar = (exit_date - entry_date).days # 計算實際日曆持股日數
+            holding_days_calendar = (exit_date - entry_date).days
 
             trades.append({
                 "ticker": ticker,
+                "strategy": strategy, # 📊 新增：記錄觸發引擎
                 "entry_date": entry_date.date(),
                 "entry_price": round(float(entry_price), 2),
                 "exit_date": exit_date.date(),
                 "exit_price": round(float(exit_price), 2),
                 "return_pct": round(float(ret_pct) * 100, 2),
-                "holding_days": holding_days_calendar, # 📊 新增的持股日數
+                "holding_days": holding_days_calendar,
                 "exit_reason": exit_reason,
             })
             i += HOLD_DAYS
@@ -118,84 +135,88 @@ def simulate_trades(df, ticker, spy_filter):
 
     return trades
 
+# ==========================================
+# 第三步：跑回測與生成多維度報告
+# ==========================================
 def run_backtest():
     print("正在下載大盤 SPY 數據建立環境濾網...")
     spy_filter = get_spy_data()
-    if spy_filter.empty: print("⚠️ 警告：SPY濾網未能建立")
+    if spy_filter.empty: print("⚠️️ 警告：SPY濾網未能建立")
 
-    all_groups_dataframes = []
+    print(f"\n======================================")
+    print(f"準備掃描 MEGA_CAP 組別的 {len(WATCHLIST)} 隻巨無霸...")
+    print(f"======================================")
 
-    for group_name, tickers in TICKER_GROUPS.items():
-        print(f"\n======================================")
-        print(f"準備掃描 {group_name} 組別的 {len(tickers)} 隻美股...")
-        print(f"======================================")
+    all_trades = []
+    for t in WATCHLIST:
+        print(f"處理緊 {t}...")
+        df = prepare_data(t)
+        if df is None: continue
+        trades = simulate_trades(df, t, spy_filter)
+        if trades: print(f" {t} 觸發咗 {len(trades)} 次訊號")
+        all_trades.extend(trades)
 
-        all_trades = []
-        for t in tickers:
-            print(f"處理緊 {t}...")
-            df = prepare_data(t)
-            if df is None: continue
-            trades = simulate_trades(df, t, spy_filter)
-            if trades: print(f" {t} 觸發咗 {len(trades)} 次訊號")
-            all_trades.extend(trades)
+    if not all_trades:
+        print("\n完全冇觸發任何交易訊號...")
+        return
 
-        if not all_trades:
-            print(f"\n{group_name} 完全冇觸發任何交易訊號...")
-            summary_data = [{"ticker": f"=== {group_name} 回測表現總結 ==="}, {"ticker": "無交易紀錄"}]
-            for d in summary_data:
-                for k in ["entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "holding_days", "exit_reason"]:
-                    if k not in d: d[k] = ""
-            all_groups_dataframes.append(pd.DataFrame(summary_data))
-            all_groups_dataframes.append(pd.DataFrame([{"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "holding_days": "", "exit_reason": ""} for _ in range(4)]))
-            continue
+    result_df = pd.DataFrame(all_trades)
 
-        result_df = pd.DataFrame(all_trades)
+    total_trades = len(result_df)
+    win_trades = result_df[result_df["return_pct"] > 0]
+    lose_trades = result_df[result_df["return_pct"] < 0]
+    be_trades = result_df[result_df["return_pct"] == 0]
 
-        total_trades = len(result_df)
-        win_trades = result_df[result_df["return_pct"] > 0]
-        lose_trades = result_df[result_df["return_pct"] < 0]
-        be_trades = result_df[result_df["return_pct"] == 0]
+    wins, losses, bes = len(win_trades), len(lose_trades), len(be_trades)
+    strict_win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
+    adj_win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
+    avg_win = win_trades["return_pct"].mean() if wins > 0 else 0
+    avg_loss = lose_trades["return_pct"].mean() if losses > 0 else 0
+    expectancy = (strict_win_rate / 100 * avg_win) + ((losses / total_trades) * avg_loss) if total_trades > 0 else 0
+    avg_holding_days = result_df["holding_days"].mean() if total_trades > 0 else 0
 
-        wins, losses, bes = len(win_trades), len(lose_trades), len(be_trades)
-        strict_win_rate = (wins / total_trades) * 100 if total_trades > 0 else 0
-        adj_win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
-        avg_win = win_trades["return_pct"].mean() if wins > 0 else 0
-        avg_loss = lose_trades["return_pct"].mean() if losses > 0 else 0
-        expectancy = (strict_win_rate / 100 * avg_win) + ((losses / total_trades) * avg_loss) if total_trades > 0 else 0
-        avg_holding_days = result_df["holding_days"].mean() if total_trades > 0 else 0
+    # 📊 計算各引擎獨立表現
+    strat_summary = []
+    for strat in ["Breakout (突破)", "Pullback (回踩)", "Dip_Buy (撈底)"]:
+        strat_df = result_df[result_df["strategy"] == strat]
+        if len(strat_df) > 0:
+            s_wins = len(strat_df[strat_df["return_pct"] > 0])
+            s_losses = len(strat_df[strat_df["return_pct"] < 0])
+            s_rate = (s_wins / (s_wins + s_losses)) * 100 if (s_wins + s_losses) > 0 else 0
+            strat_summary.append({"ticker": f" {strat} 觸發 {len(strat_df)} 次，真實勝率 {s_rate:.1f}%"})
+        else:
+            strat_summary.append({"ticker": f" {strat} 無觸發紀錄"})
 
-        reason_counts = result_df["exit_reason"].value_counts()
-        reason_lines = [{"ticker": f" {reason}：{count} 次"} for reason, count in reason_counts.items()]
+    reason_counts = result_df["exit_reason"].value_counts()
+    reason_lines = [{"ticker": f" {reason}：{count} 次"} for reason, count in reason_counts.items()]
 
-        summary_data = [
-            {"ticker": f"=== {group_name} 回測表現總結 ==="},
-            {"ticker": f"總交易次數：{total_trades} 次"},
-            {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次"},
-            {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）"},
-            {"ticker": f"平均贏單利潤：+{avg_win:.2f}%"},
-            {"ticker": f"平均輸單虧損：{avg_loss:.2f}%"},
-            {"ticker": f"期望值（每注平均）：{expectancy:.2f}%"},
-            {"ticker": f"平均持股日數：{avg_holding_days:.1f} 日"},
-            {"ticker": ""},
-            {"ticker": "出場原因分布："},
-            *reason_lines,
-            {"ticker": ""},
-            {"ticker": f"--- {group_name} 詳細交易紀錄 ---"},
-        ]
-        for d in summary_data:
-            for k in ["entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "holding_days", "exit_reason"]:
-                if k not in d: d[k] = ""
+    summary_data = [
+        {"ticker": f"=== MEGA CAP 全天候三引擎回測總結 ==="},
+        {"ticker": f"總交易次數：{total_trades} 次"},
+        {"ticker": f"按實際盈虧：贏 {wins} 次、輸 {losses} 次、打和 {bes} 次"},
+        {"ticker": f"嚴格勝率：{strict_win_rate:.2f}%（若撇除打和，真實勝率約為 {adj_win_rate:.2f}%）"},
+        {"ticker": f"平均贏單利潤：+{avg_win:.2f}%"},
+        {"ticker": f"平均輸單虧損：{avg_loss:.2f}%"},
+        {"ticker": f"期望值（每注平均）：{expectancy:.2f}%"},
+        {"ticker": f"平均持股日數：{avg_holding_days:.1f} 日"},
+        {"ticker": ""},
+        {"ticker": "各引擎表現拆解："},
+        *strat_summary,
+        {"ticker": ""},
+        {"ticker": "出場原因分布："},
+        *reason_lines,
+        {"ticker": ""},
+        {"ticker": f"--- 詳細交易紀錄 ---"},
+    ]
+    
+    for d in summary_data:
+        for k in ["strategy", "entry_date", "entry_price", "exit_date", "exit_price", "return_pct", "holding_days", "exit_reason"]:
+            if k not in d: d[k] = ""
 
-        summary_df = pd.DataFrame(summary_data)
-        group_final_df = pd.concat([summary_df, result_df], ignore_index=True)
-        all_groups_dataframes.append(group_final_df)
-
-        empty_lines = pd.DataFrame([{"ticker": "", "entry_date": "", "entry_price": "", "exit_date": "", "exit_price": "", "return_pct": "", "holding_days": "", "exit_reason": ""} for _ in range(5)])
-        all_groups_dataframes.append(empty_lines)
-
-    final_combined_df = pd.concat(all_groups_dataframes, ignore_index=True)
+    summary_df = pd.DataFrame(summary_data)
+    final_combined_df = pd.concat([summary_df, result_df], ignore_index=True)
     final_combined_df.to_csv("backtest_results.csv", index=False, encoding="utf-8-sig")
-    print("\n✅ 雙組別詳細交易紀錄已整合並存到 backtest_results.csv")
+    print("\n✅ 三引擎詳細交易紀錄已整合並存到 backtest_results.csv")
 
 if __name__ == "__main__":
     run_backtest()

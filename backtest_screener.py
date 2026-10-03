@@ -47,9 +47,12 @@ POSITION_SIZE_SWEEP = [0.05, 0.10, 0.15, 0.20, 0.25]
 # 🎯 分級倉位(Tiered Sizing)：Breakout+Mega Cap呢類歷史上較穩陣嘅組合加碼，
 # Pullback+High Beta呢類較弱嘅組合減碼。掃描唔同嘅BASE，揀邊個base令
 # 「分級後」嘅組合喺訓練/驗證兩期都企得住。全部仍然喺$80,000之內，冇槓桿。
-# （max_pct封頂已經由20%放寬到35%——見strategy_core.get_tiered_position_size_pct——
-#   等base去到20%+嗰陣，Breakout呢類高倍數組合先至唔會未夠高就被封頂、失去分級效果）
-TIER_BASE_SWEEP = [0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.25]
+# ⚠️ max_pct封頂而家放寬到50%（見strategy_core.get_tiered_position_size_pct）——
+#   純粹探索「極限去到邊」，唔代表35%/50%單一注碼係審慎嘅實戰上限。
+#   base愈大，開到嘅倉次數愈少（資金一早用晒），留意埋sweep結果入面嘅taken次數，
+#   如果「最佳」base對應嘅trade數太少，個CAGR可信度會大跌，唔淨係睇過擬合差距。
+TIER_BASE_SWEEP = [0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.25,
+                    0.275, 0.30, 0.325, 0.35]
 
 
 def get_spy_data():

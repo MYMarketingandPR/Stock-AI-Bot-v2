@@ -102,7 +102,9 @@ def scan_breakout_candidates(spy_bullish):
     print(f"正在批次下載 {len(WATCHLIST)} 隻 Mega Cap 股票歷史數據...")
     candidates = []
     try:
-        batch = yf.download(WATCHLIST, period="1y", group_by="ticker", threads=True, progress=False)
+        # 要用2y：52週高位(High52w)要252個交易日先計到，1y只有約250日，
+        # 會令PctFrom52wHigh永遠係NaN，check_breakout_signal永遠唔觸發。
+        batch = yf.download(WATCHLIST, period="2y", group_by="ticker", threads=True, progress=False)
     except: return candidates
 
     for t in WATCHLIST:

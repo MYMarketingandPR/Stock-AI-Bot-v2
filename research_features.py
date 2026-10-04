@@ -102,7 +102,9 @@ def ticker_features(df):
     return d
 
 
-def build_samples():
+def build_samples(extra=None, extra_cols=()):
+    """extra：可選，額外指標function(喺每隻股自己嘅交易日上計)；extra_cols：要放入樣本嘅額外欄位。
+    唔傳就同原本設計完全一樣（呢個file自己嘅研究唔會用到）。"""
     universe = S.v2_universe()
     group_of = dict(universe)
     print("下載SPY ...")
@@ -114,7 +116,7 @@ def build_samples():
     raw = download_all([t for t, _ in universe])
     cols = list(raw.keys())
     print(f"有足夠數據嘅股票：{len(cols)}")
-    feats = {t: ticker_features(raw[t]).reindex(idx) for t in cols}
+    feats = {t: (extra(ticker_features(raw[t])) if extra else ticker_features(raw[t])).reindex(idx) for t in cols}
 
     def panel(f):
         return pd.DataFrame({t: feats[t][f] for t in cols}, index=idx)
@@ -124,7 +126,7 @@ def build_samples():
     RS = rs_df.values
     RSCHG = (rs_df - rs_df.shift(20)).values
     breadth = panel("above50").mean(axis=1).values
-    F = {f: panel(f).values for f, _ in FEATURES if f.startswith("f_")}
+    F = {f: panel(f).values for f in [f for f, _ in FEATURES if f.startswith("f_")] + list(extra_cols)}
 
     weekly_last = pd.Series(np.arange(len(idx)), index=idx).groupby(idx.to_period("W-FRI")).last().values
     n, m = C.shape

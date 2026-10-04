@@ -1,0 +1,29 @@
+report
+"20210615: HTTP 200, 1986262 bytes"
+  accountingYearMonthNumber|symbolCode|issueName|issuerServicesGroupExchangeCode|marketClassCode|currentShortPositionQuantity|previousShortPositionQuantity|stockSplitFlag|averageDailyVolumeQuantity|daysToCoverQuantity|revisionFlag|changePercent|changePreviousNumber|settlementDate
+  20210615|A|Agilent Technologies Inc.|A|NYSE|2556898|2532112||1198057|2.13|R|0.98|24786|2021-06-15
+  20210615|AA|Alcoa Corporation|A|NYSE|10000722|9520100||5371918|1.86|R|5.05|480622|2021-06-15
+  20210615|AAA|AAF First Priority CLO Bond ET|E|ARCA|2403|2944||1080|2.23||-18.38|-541|2021-06-15
+  20210615|GME|GameStop Corp. Class A|A|NYSE|9670734|11971623||11563428|1.00|R|-19.22|-2300889|2021-06-15
+  20210615|AAPL|Apple Inc. Common Stock|R|NNM|108937943|123051652||69509314|1.57|R|-11.47|-14113709|2021-06-15
+"  20210615|UPST|Upstart Holdings, Inc. Common|R|NNM|10163918|6031744||6166147|1.65|R|68.51|4132174|2021-06-15"
+  20210615|CVNA|Carvana Co.|A|NYSE|17163310|17276529||1070606|16.03|R|-0.66|-113219|2021-06-15
+"20210630: HTTP 200, 1970993 bytes"
+  accountingYearMonthNumber|symbolCode|issueName|issuerServicesGroupExchangeCode|marketClassCode|currentShortPositionQuantity|previousShortPositionQuantity|stockSplitFlag|averageDailyVolumeQuantity|daysToCoverQuantity|revisionFlag|changePercent|changePreviousNumber|settlementDate
+  20210630|A|Agilent Technologies Inc.|A|NYSE|2456982|2556898||2309525|1.06||-3.91|-99916|2021-06-30
+  20210630|AA|Alcoa Corporation|A|NYSE|10384553|10000722||10449522|1.00||3.84|383831|2021-06-30
+  20210630|AAA|AAF First Priority CLO Bond ET|E|ARCA|2866|2403||1324|2.16||19.27|463|2021-06-30
+  20210630|GME|GameStop Corp. Class A|A|NYSE|8224618|9670734||5256753|1.56||-14.95|-1446116|2021-06-30
+  20210630|AAPL|Apple Inc. Common Stock|R|NNM|90213531|108937943||76480665|1.18||-17.19|-18724412|2021-06-30
+"  20210630|UPST|Upstart Holdings, Inc. Common|R|NNM|3217754|10163918||6380843|1.00||-68.34|-6946164|2021-06-30"
+  20210630|CVNA|Carvana Co.|A|NYSE|16541774|17163310||1842906|8.98||-3.62|-621536|2021-06-30
+"20240115: HTTP 403, 111 bytes"
+"20260915: HTTP 200, 2747640 bytes"
+"  ""accountingYearMonthNumber""|""symbolCode""|""issueName""|""issuerServicesGroupExchangeCode""|""marketClassCode""|""currentShortPositionQuantity""|""previousShortPositionQuantity""|""stockSplitFlag""|""averageDailyVolumeQuantity""|""daysToCoverQuantity""|""revisionFlag""|""changePercent""|""changePreviousNumber""|""settlementDate"""
+"  ""20260915""|""A""|""Agilent Technologies Inc.""|""A""|""NYSE""|""5078629""|""5677007""||""2001064""|""2.54""||""-10.54""|""-598378""|""2026-09-15"""
+"  ""20260915""|""AA""|""Alcoa Corporation""|""A""|""NYSE""|""11984650""|""12188128""||""3402658""|""3.52""||""-1.67""|""-203478""|""2026-09-15"""
+"  ""20260915""|""AAA""|""Alternative Access First Prior""|""E""|""ARCA""|""1429""|""45291""||""17098""|""1.00""||""-96.84""|""-43862""|""2026-09-15"""
+"  ""20260915""|""GME""|""GameStop Corp. Class A""|""A""|""NYSE""|""39069126""|""56990026""||""9105968""|""4.29""||""-31.45""|""-17920900""|""2026-09-15"""
+"  ""20260915""|""AAPL""|""Apple Inc. Common Stock""|""R""|""NNM""|""128753092""|""139749097""||""45135477""|""2.85""||""-7.87""|""-10996005""|""2026-09-15"""
+"  ""20260915""|""UPST""|""Upstart Holdings, Inc. Common""|""R""|""NNM""|""27649788""|""25946861""||""4028630""|""6.86""||""6.56""|""1702927""|""2026-09-15"""
+"  ""20260915""|""CVNA""|""Carvana Co.""|""A""|""NYSE""|""62226156""|""65927875""||""6081977""|""10.23""||""-5.61""|""-3701719""|""2026-09-15"""

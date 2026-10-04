@@ -58,21 +58,28 @@ def sp500_history():
     首選：fja05680/sp500（GitHub公開數據，逐日列出當時成分股）；後備：Wikipedia變動表倒推。"""
     try:
         api = requests.get("https://api.github.com/repos/fja05680/sp500/contents/", headers=HDR, timeout=30).json()
-        files = sorted(f["name"] for f in api if f["name"].startswith("S&P 500 Historical Components")
-                       and f["name"].endswith(".csv"))
-        name = files[-1]
+        import re
+        cands = []
+        for f in api:
+            n = f["name"]
+            mm = re.search(r"\((\d{2})-(\d{2})-(\d{4})\)\.csv$", n)
+            if n.startswith("S&P 500 Historical Components") and mm:
+                cands.append((pd.Timestamp(f"{mm.group(3)}-{mm.group(1)}-{mm.group(2)}"), n))
+        name = max(cands)[1]           # 檔名日期最新嗰個（唔好揀冇日期嘅舊檔）
         url = "https://raw.githubusercontent.com/fja05680/sp500/master/" + requests.utils.quote(name)
         df = pd.read_csv(io.StringIO(requests.get(url, headers=HDR, timeout=60).text))
         df["date"] = pd.to_datetime(df["date"])
         df = df.sort_values("date")
         snaps = [(d, set(norm(t) for t in str(x).split(","))) for d, x in zip(df["date"], df["tickers"])]
         log(f"成分股來源：fja05680/sp500 {name}，{len(snaps)}個日期，{snaps[0][0].date()} 至 {snaps[-1][0].date()}")
+        if snaps[-1][0] < pd.Timestamp("2026-01-01"):
+            raise RuntimeError(f"成分股數據只到 {snaps[-1][0].date()}，太舊")
         dates = [d for d, _ in snaps]
 
         def members(d):
             i = int(np.searchsorted(np.array(dates, dtype="datetime64[ns]"), np.datetime64(d), side="right")) - 1
             return snaps[max(i, 0)][1]
-        return members
+        return members, f"fja05680/sp500（{name}）"
     except Exception as e:
         log(f"fja05680數據用唔到（{e}），改用Wikipedia")
     html = requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", headers=HDR, timeout=30).text
@@ -104,36 +111,31 @@ def sp500_history():
             if isinstance(r["removed"], str) and r["removed"].strip():
                 s.add(norm(r["removed"]))
         return s
-    return members
+    return members, "Wikipedia變動表倒推"
 
 
 # ---------------- 數據 ----------------
 def download_close(tickers, start, end):
+    """一隻一隻慢慢下載（批量下載會被Yahoo限制，之前只攞到一半）。"""
     import yfinance as yf
-    out = {}
-    todo = list(tickers)
-    for attempt in range(3):
-        missing = []
-        for i in range(0, len(todo), 50):
-            part = todo[i:i + 50]
-            time.sleep(1 + attempt * 2)
+    out, fails = {}, []
+    for n, t in enumerate(tickers):
+        for attempt in range(3):
             try:
-                df = yf.download(part, start=start, end=end, auto_adjust=True, progress=False, threads=True)
-                cl = df["Close"] if isinstance(df.columns, pd.MultiIndex) else df[["Close"]].rename(columns={"Close": part[0]})
+                h = yf.Ticker(t).history(start=start, end=end, auto_adjust=True)
+                if h is not None and len(h) > 20:
+                    s = h["Close"].astype(float)
+                    s.index = pd.DatetimeIndex(s.index).tz_localize(None).normalize()
+                    out[t] = s[~s.index.duplicated(keep="last")]
+                break
             except Exception:
-                missing += part
-                continue
-            for t in part:
-                s = cl[t].dropna() if t in cl else pd.Series(dtype=float)
-                if len(s) > 20:
-                    out[t] = s.astype(float)
-                else:
-                    missing.append(t)
-        log(f"下載第{attempt + 1}輪：有數據 {len(out)}，未有 {len(missing)}")
-        if not missing:
-            break
-        todo = missing
-        time.sleep(30)
+                time.sleep(5 * (attempt + 1))
+        if t not in out:
+            fails.append(t)
+        time.sleep(0.3)
+        if (n + 1) % 100 == 0:
+            log(f"下載進度 {n + 1}/{len(tickers)}，有數據 {len(out)}")
+    log(f"下載完成：有數據 {len(out)}/{len(tickers)}；冇數據例子：{fails[:40]}")
     return out
 
 
@@ -225,7 +227,7 @@ def band_filter(spy, n=200, b=0.02):
 
 def main():
     open(PROGRESS, "w").close()
-    members_fn = sp500_history()
+    members_fn, source = sp500_history()
     month_ends = pd.date_range("2004-12-31", END, freq="ME")
     members = {d: members_fn(d) for d in month_ends}
     everyone = sorted(set().union(*members.values()))
@@ -277,7 +279,7 @@ def main():
         log(f"SPY訊號方案計唔到：{e}")
 
     L = ["=== 月度動量排名回測（規則預先登記，見momentum_v1.py開頭）===",
-         "股票池：每月用當時嘅標普500成分股（由Wikipedia變動表倒推）；12-1動量；每月換倉；每次買賣0.1%",
+         f"股票池：每月用當時嘅標普500成分股（來源：{source}）；12-1動量；每月換倉；每次買賣0.1%",
          "數據覆蓋率：" + "；".join(cov), ""]
     L.append("=== 比較對象 ===")
     for k, eq in bench.items():

@@ -1,0 +1,51 @@
+name: research_runner
+
+# 通用研究執行器：跑指定嘅Python研究程式，將輸出CSV放去 research-results 分支
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "要跑嘅程式，例如 spy_bottoms_v2_check.py"
+        required: true
+      outputs:
+        description: "輸出檔案（用空格分開）"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 把房間的野拿出黎
+        uses: actions/checkout@v4
+
+      - name: 安裝 Python 大腦
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 安裝小幫手工具
+        run: pip install yfinance pandas numpy
+
+      - name: 跑研究
+        run: python -u "${{ inputs.script }}"
+
+      - name: 上傳結果
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-output
+          path: ${{ inputs.outputs }}
+
+      - name: 將結果放去 research-results 分支
+        run: |
+          mkdir -p /tmp/out && cp ${{ inputs.outputs }} /tmp/out/
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git fetch origin research-results
+          git checkout -B research-results origin/research-results
+          cp /tmp/out/* .
+          git add ${{ inputs.outputs }}
+          git commit -m "${{ inputs.script }} results (run ${{ github.run_id }})" || echo "冇改變"
+          git push origin research-results

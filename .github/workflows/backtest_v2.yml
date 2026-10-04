@@ -1,0 +1,31 @@
+name: backtest_v2_minervini
+
+# v2：Minervini趨勢模板 + RS評級 + 突破入場，規則預先登記喺strategy_v2.py。
+on:
+  workflow_dispatch:
+
+jobs:
+  run-v2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 把房間的野拿出黎
+        uses: actions/checkout@v4
+
+      - name: 安裝 Python 大腦
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 安裝小幫手工具
+        run: pip install yfinance pandas numpy
+
+      - name: 跑v2回測（2010-2026）
+        run: python -u backtest_v2.py
+
+      - name: 上傳v2結果
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-results
+          path: |
+            v2_results.csv
+            v2_equity.csv

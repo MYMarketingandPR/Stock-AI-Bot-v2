@@ -35,6 +35,16 @@ from short_term_common import download, base_features, build_trades, report
 PERIODS = [("全期", "2021-07-01", "2026-09-30"), ("前半", "2021-07-01", "2023-12-31"),
            ("後半", "2024-01-01", "2026-09-30")]
 LAG_BDAYS = 9
+PROGRESS = "short_squeeze_progress.txt"
+
+
+def log(msg):
+    import resource
+    mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    line = f"{time.strftime('%H:%M:%S')} [記憶體 {mem:.0f}MB] {msg}"
+    print(line, flush=True)
+    with open(PROGRESS, "a") as fh:
+        fh.write(line + "\n")
 COOLDOWN = 20
 
 
@@ -70,7 +80,7 @@ def fetch_finra():
     si["settle"] = pd.to_datetime(si["settlementDate"])
     si = si[~si["marketClassCode"].astype(str).str.upper().str.contains("OTC|BB", na=False)]
     si = si[si["symbolCode"].astype(str).str.fullmatch(r"[A-Z]{1,5}")]
-    print(f"FINRA：{si['settle'].nunique()}個結算日，{si['symbolCode'].nunique()}隻股票")
+    log(f"FINRA：{si['settle'].nunique()}個結算日，{si['symbolCode'].nunique()}隻股票")
     return si[["symbolCode", "settle", "short"]].rename(columns={"symbolCode": "ticker"})
 
 
@@ -85,21 +95,24 @@ def fetch_float(tickers):
             except Exception:
                 time.sleep(1)
         return t, np.nan
-    with ThreadPoolExecutor(6) as ex:
+    with ThreadPoolExecutor(4) as ex:
         out = dict(ex.map(one, tickers))
-    print(f"流通股：{sum(~np.isnan(v) for v in out.values())}/{len(tickers)}隻有數據")
+    log(f"流通股：{sum(~np.isnan(v) for v in out.values())}/{len(tickers)}隻有數據")
     return out
 
 
 def main():
+    open(PROGRESS, "w").close()
+    log("開始下載FINRA")
     si = fetch_finra()
     cand = si.groupby("ticker")["short"].max()
     cand = sorted(cand[cand >= 500_000].index)
-    print(f"曾經被沽空50萬股以上：{len(cand)}隻")
+    log(f"曾經被沽空50萬股以上：{len(cand)}隻")
     spy = download(["SPY", "QQQ"], "2020-06-01", "2026-10-01")["SPY"]["Close"]
     prices = download(cand, "2020-06-01", "2026-10-01")
-    print(f"有價格數據：{len(prices)}/{len(cand)}隻")
+    log(f"有價格數據：{len(prices)}/{len(cand)}隻")
     prices = {t: d for t, d in prices.items() if (d["Close"] > 15).any()}
+    log("開始下載流通股")
     floats = fetch_float(sorted(prices))
     bday = pd.offsets.BDay(LAG_BDAYS)
 
@@ -123,8 +136,9 @@ def main():
             if i - last > COOLDOWN:
                 signals.append((t, i, float(f["relvol"].iloc[i])))
                 last = i
-    print(f"信號數：{len(signals)}")
+    log(f"信號數：{len(signals)}")
     trades = build_trades(signals, prices, spy)
+    log(f"交易紀錄：{len(trades)}行，開始組合模擬")
     trades.to_csv("short_squeeze_trades.csv.gz", index=False, compression="gzip")
     notes = [f"股票池：FINRA曾被沽空50萬股以上{len(cand)}隻；有價格數據而且曾經高過$15：{len(prices)}隻；"
              f"有流通股數據：{sum(1 for v in floats.values() if v > 0)}隻；信號共{len(signals)}個",
@@ -146,6 +160,7 @@ if __name__ == "__main__":
     except Exception:
         import traceback
         tb = traceback.format_exc()
+        log("出錯：" + tb)
         print(tb)
         pd.DataFrame({"report": ["❌ 程式出錯：", *tb.splitlines()]}).to_csv(
             "short_squeeze_results.csv", index=False, encoding="utf-8-sig")

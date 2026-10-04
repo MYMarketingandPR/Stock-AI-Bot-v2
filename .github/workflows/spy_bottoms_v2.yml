@@ -1,0 +1,49 @@
+name: spy_bottoms_v2
+
+# SPY見底研究第二版（成交量、VIX、EMA9/21；規則預先登記喺spy_bottoms_v2.py）
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-bottoms-v2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 把房間的野拿出黎
+        uses: actions/checkout@v4
+
+      - name: 安裝 Python 大腦
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 安裝小幫手工具
+        run: pip install yfinance pandas numpy
+
+      - name: 跑SPY見底研究第二版
+        run: python -u spy_bottoms_v2.py
+
+      - name: 上傳結果
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-bottoms-v2-results
+          path: spy_bottoms_v2_results.csv
+
+      - name: 將結果放去 research-results 分支（方便直接睇）
+        run: |
+          cp spy_bottoms_v2_results.csv /tmp/
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git fetch origin research-results || true
+          if git rev-parse --verify origin/research-results >/dev/null 2>&1; then
+            git checkout -B research-results origin/research-results
+          else
+            git checkout --orphan research-results
+            git rm -rf . >/dev/null
+          fi
+          cp /tmp/spy_bottoms_v2_results.csv .
+          git add spy_bottoms_v2_results.csv
+          git commit -m "spy_bottoms_v2 results (run ${{ github.run_id }})" || echo "冇改變"
+          git push origin research-results

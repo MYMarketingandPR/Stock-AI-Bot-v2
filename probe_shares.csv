@@ -1,0 +1,19 @@
+report
+"GME get_shares_full: 455點；頭：('2021-03-17 00:00:00-04:00', 69747000.0)；尾：('2026-09-11 00:00:00-04:00', 504500990.0)"
+GME fast_info shares: 504500990
+GME info floatShares: 461921106
+"UPST get_shares_full: 470點；頭：('2021-02-03 00:00:00-05:00', 67449000.0)；尾：('2026-08-06 00:00:00-04:00', 95711569.0)"
+UPST fast_info shares: 95711569
+UPST info floatShares: 83666838
+"CVNA get_shares_full: 34點；頭：('2021-03-02 00:00:00-05:00', 172260992.0)；尾：('2026-08-27 00:00:00-04:00', 719916415.0)"
+CVNA fast_info shares: 719916415
+CVNA info floatShares: 706360389
+"AMC get_shares_full: 459點；頭：('2021-01-27 00:00:00-05:00', 339072992.0)；尾：('2026-08-28 00:00:00-04:00', 892604638.0)"
+AMC fast_info shares: 892604638
+AMC info floatShares: 835344050
+"BYND get_shares_full: 512點；頭：('2021-03-02 00:00:00-05:00', 62820400.0)；尾：('2026-08-18 00:00:00-04:00', 17193965.0)"
+BYND fast_info shares: 17193965
+BYND info floatShares: 15580297
+"AAPL get_shares_full: 275點；頭：('2021-01-07 00:00:00-05:00', 16823300096.0)；尾：('2026-08-05 00:00:00-04:00', 14594180000.0)"
+AAPL fast_info shares: 14594180000
+AAPL info floatShares: 14569078010

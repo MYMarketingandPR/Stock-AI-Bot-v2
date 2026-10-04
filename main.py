@@ -198,14 +198,11 @@ def main(df=None):
         i = int(df.index.searchsorted(target, side="right")) - 1
     else:
         i = len(df) - 1
-        today_ny = datetime.now(ZoneInfo("America/New_York")).date()
-        if df.index[i].date() != today_ny and not dry:
-            msg = f"📊 SPY每日訊號：今日（{today_ny}）未有新收市數據，可能係美股休市。最後數據日期：{df.index[i].date()}。"
-            print(msg)
-            send_telegram(msg)
-            return
-
     text, state, sell_line, buy_line = build_message(df, i)
+    today_ny = datetime.now(ZoneInfo("America/New_York")).date()
+    if "--date" not in sys.argv and df.index[i].date() != today_ny:
+        text = (f"ℹ️ 今日（{today_ny}）未有新收市數據（可能係休市），"
+                f"以下係最後交易日 {df.index[i].date()} 嘅訊號：\n\n") + text
     print(text)
     if not dry:
         send_telegram(text)

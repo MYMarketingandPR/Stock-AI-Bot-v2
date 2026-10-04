@@ -36,10 +36,12 @@ def sp_universe():
     return sorted(set(out))
 
 
-def download(tickers, start, end, chunk=100):
+def download(tickers, start, end, chunk=100, _retry=True):
+    import time
     import yfinance as yf
     data = {}
     for i in range(0, len(tickers), chunk):
+        time.sleep(1)
         part = tickers[i:i + chunk]
         try:
             df = yf.download(part, start=start, end=end, auto_adjust=False, group_by="ticker",
@@ -56,6 +58,11 @@ def download(tickers, start, end, chunk=100):
             except Exception:
                 pass
         print(f"已下載 {min(i + chunk, len(tickers))}/{len(tickers)}，有效 {len(data)}")
+    missing = [t for t in tickers if t not in data]
+    if _retry and missing:
+        print(f"再試一次 {len(missing)}隻")
+        time.sleep(20)
+        data.update(download(missing, start, end, chunk=50, _retry=False))
     return data
 
 

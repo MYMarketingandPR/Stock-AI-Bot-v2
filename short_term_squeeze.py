@@ -5,7 +5,7 @@ short_term_squeeze.py — 短炒回測②：Short Squeeze（照用戶Finviz篩�
 數據：
   - 沽空股數：FINRA每半個月公佈嘅數據（2021-06起先有交易所上市股票）。
     結算日之後9個交易日先當係「已經知道」（FINRA大約7個交易日後公佈，留多兩日）。
-  - 流通股（Float）：只有今日數字（yfinance），當過去一直都係咁 —— ⚠️ 有偏差。
+  - 流通股（Float）：只有今日數字（Finviz），當過去一直都係咁 —— ⚠️ 有偏差。
   - 機構持股 >50%、機構買賣 >0%：冇免費歷史數據，測試唔到，唔用。
   - 可以買期權（Optionable）：冇歷史數據，唔用。
 信號（每日收市後）：
@@ -17,7 +17,7 @@ short_term_squeeze.py — 短炒回測②：Short Squeeze（照用戶Finviz篩�
   - 當日成交量 > 50萬股（Current Volume Over 500K）
   - 同一隻股票出咗信號之後20個交易日內唔再計（避免重複）
 買入時間、賣出方法、組合、成本：同short_term_gap.py一樣（$10,000，最多3隻，每次0.15%）。
-股票池：FINRA數據入面曾經被沽空50萬股以上嘅普通股（⚠️已除牌公司冇價格數據，有倖存者偏差）。
+股票池：FINRA數據入面曾經被沽空50萬股以上、而今日Finviz流通股少過1億嘅股票（⚠️已除牌公司唔喺入面，有倖存者偏差）。
 測試期：2021-07至2026-09；前半2021-07至2023-12，後半2024-01至2026-09。
 揀法：同short_term_gap.py一樣。
 輸出：short_squeeze_results.csv、short_squeeze_trades.csv.gz
@@ -84,20 +84,30 @@ def fetch_finra():
     return si[["symbolCode", "settle", "short"]].rename(columns={"symbolCode": "ticker"})
 
 
-def fetch_float(tickers):
-    import yfinance as yf
+def parse_num(x):
+    if isinstance(x, (int, float)):
+        return float(x)
+    x = str(x).strip().replace(",", "")
+    mult = {"K": 1e3, "M": 1e6, "B": 1e9}.get(x[-1:].upper(), 1)
+    try:
+        return float(x[:-1] if mult != 1 else x) * mult
+    except ValueError:
+        return np.nan
 
-    def one(t):
-        for _ in range(2):
-            try:
-                v = yf.Ticker(t).info.get("floatShares")
-                return t, float(v) if v else np.nan
-            except Exception:
-                time.sleep(1)
-        return t, np.nan
-    with ThreadPoolExecutor(4) as ex:
-        out = dict(ex.map(one, tickers))
-    log(f"流通股：{sum(~np.isnan(v) for v in out.values())}/{len(tickers)}隻有數據")
+
+def fetch_float():
+    """用Finviz（finvizfinance）攞今日流通股少過1億嘅股票同佢哋嘅流通股數。"""
+    from finvizfinance.screener.ownership import Ownership
+    sc = Ownership()
+    sc.set_filter(filters_dict={"Float": "Under 100M"})
+    df = sc.screener_view(verbose=0, sleep_sec=0.5)
+    log(f"Finviz欄位：{list(df.columns)}；頭兩行：{df.head(2).to_dict('records')}")
+    out = {str(t): parse_num(v) for t, v in zip(df["Ticker"], df["Float"])}
+    # finvizfinance有時已經換算成「百萬」單位
+    vals = np.array([v for v in out.values() if v == v])
+    if len(vals) and np.nanmedian(vals) < 1000:
+        out = {k: v * 1e6 for k, v in out.items()}
+    log(f"Finviz：流通股少過1億嘅股票 {len(out)}隻（流通股中位數 {np.nanmedian(list(out.values())):,.0f}）")
     return out
 
 
@@ -106,14 +116,15 @@ def main():
     log("開始下載FINRA")
     si = fetch_finra()
     cand = si.groupby("ticker")["short"].max()
-    cand = sorted(cand[cand >= 500_000].index)
+    cand = set(cand[cand >= 500_000].index)
     log(f"曾經被沽空50萬股以上：{len(cand)}隻")
+    floats = fetch_float()
+    cand = sorted(cand & set(floats))
+    log(f"同時係今日流通股少過1億：{len(cand)}隻")
     spy = download(["SPY", "QQQ"], "2020-06-01", "2026-10-01")["SPY"]["Close"]
     prices = download(cand, "2020-06-01", "2026-10-01")
     log(f"有價格數據：{len(prices)}/{len(cand)}隻")
     prices = {t: d for t, d in prices.items() if (d["Close"] > 15).any()}
-    log("開始下載流通股")
-    floats = fetch_float(sorted(prices))
     bday = pd.offsets.BDay(LAG_BDAYS)
 
     signals = []
@@ -137,11 +148,15 @@ def main():
                 signals.append((t, i, float(f["relvol"].iloc[i])))
                 last = i
     log(f"信號數：{len(signals)}")
+    if not signals:
+        L = ["❌ 冇任何信號", f"股票池 {len(cand)}隻，有價格 {len(prices)}隻"]
+        pd.DataFrame({"report": L}).to_csv("short_squeeze_results.csv", index=False, encoding="utf-8-sig")
+        return
     trades = build_trades(signals, prices, spy)
     log(f"交易紀錄：{len(trades)}行，開始組合模擬")
     trades.to_csv("short_squeeze_trades.csv.gz", index=False, compression="gzip")
-    notes = [f"股票池：FINRA曾被沽空50萬股以上{len(cand)}隻；有價格數據而且曾經高過$15：{len(prices)}隻；"
-             f"有流通股數據：{sum(1 for v in floats.values() if v > 0)}隻；信號共{len(signals)}個",
+    notes = [f"股票池：FINRA曾被沽空50萬股以上、今日流通股<1億：{len(cand)}隻；有價格數據而且曾經高過$15：{len(prices)}隻；"
+             f"信號共{len(signals)}個",
              "⚠️ 流通股用今日數字；機構持股/機構買賣/期權條件測試唔到",
              "成本每次買或賣0.15%；組合$10,000最多同時3隻"]
     L, _ = report(trades, prices, spy, PERIODS, "=== 短炒回測②：Short Squeeze（規則預先登記，見short_term_squeeze.py）===", notes)

@@ -1,12 +1,18 @@
-18:45:12 fja05680數據用唔到（max() arg is an empty sequence），改用Wikipedia
-18:45:12 Wikipedia表0欄位：['Symbol', 'Security', 'GICS Sector', 'GICS Sub-Industry', 'Headquarters Location', 'Date added', 'CIK', 'Founded']
-18:45:12 Wikipedia表1欄位：['vteS&P 500 companies', 'vteS&P 500 companies.1']
-18:45:12 出錯：Traceback (most recent call last):
-  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/momentum_v1.py", line 326, in <module>
-    main()
-  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/momentum_v1.py", line 230, in main
-    members_fn, source = sp500_history()
-  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/momentum_v1.py", line 98, in sp500_history
-    date_col = [c for c in ch.columns if "date" in c.lower()][0]
-AttributeError: 'NoneType' object has no attribute 'columns'
-
+18:48:11 成分股來源：fja05680/sp500 S&P 500 Historical Components & Changes (Updated).csv，2720個日期，1996-01-02 至 2026-08-18，最後一日503隻
+18:48:11 2005-2026曾經係成分股：976隻
+18:49:04 下載進度 100/977，有數據 69
+18:49:56 下載進度 200/977，有數據 132
+18:50:47 下載進度 300/977，有數據 197
+18:51:40 下載進度 400/977，有數據 272
+18:52:34 下載進度 500/977，有數據 341
+18:53:26 下載進度 600/977，有數據 410
+18:54:19 下載進度 700/977，有數據 481
+18:55:11 下載進度 800/977，有數據 550
+18:56:04 下載進度 900/977，有數據 624
+18:56:44 下載完成：有數據 678/977；冇數據例子：['AABA', 'ABC', 'ABKFQ', 'ABMD', 'ABS', 'ACAS', 'ACS', 'ADS', 'AET', 'AGN', 'AKS', 'ALTR', 'ALXN', 'AMCC', 'ANDV', 'ANDW', 'ANRZQ', 'ANSS', 'ANTM', 'APCC', 'APOL', 'ARG', 'ARNC', 'ASN', 'AT', 'ATGE', 'ATVI', 'AVB', 'AVP', 'AW', 'AYE', 'BCR', 'BDK', 'BHGE', 'BIG', 'BJS', 'BK', 'BLL', 'BLS', 'BMC']
+18:56:46 數據覆蓋率（每年1月前月尾）：2004：260/495（53%）；2005：272/497（55%）；2006：283/497（57%）；2007：300/497（60%）；2008：307/498（62%）；2009：321/499（64%）；2010：327/497（66%）；2011：337/497（68%）；2012：347/497（70%）；2013：353/497（71%）；2014：360/499（72%）；2015：376/502（75%）；2016：395/506（78%）；2017：408/505（81%）；2018：419/505（83%）；2019：435/505（86%）；2020：446/505（88%）；2021：455/505（90%）；2022：472/503（94%）；2023：480/503（95%）；2024：487/503（97%）；2025：495/503（98%）
+18:56:46 換倉月份：262
+18:56:47 完成 前10隻
+18:56:48 完成 前20隻
+18:56:49 完成 前50隻
+18:56:54 完成

@@ -95,9 +95,9 @@ BREAKOUT_RSI_MAX_SWEEP = [85, 75, 65, 60]
 DIP_BUY_RSI_CEILING_SWEEP = [100, 70, 65, 60]
 
 
-def get_spy_data():
+def get_spy_data(start=START_DATE, end=END_DATE):
     try:
-        spy = yf.download("SPY", start=START_DATE, end=END_DATE, progress=False)
+        spy = yf.download("SPY", start=start, end=end, progress=False)
         if isinstance(spy.columns, pd.MultiIndex):
             spy.columns = spy.columns.get_level_values(0)
         spy["SPY_SMA50"] = spy["Close"].rolling(50).mean()
@@ -107,8 +107,8 @@ def get_spy_data():
         return pd.Series(dtype=bool)
 
 
-def prepare_data(ticker):
-    df = yf.download(ticker, start=START_DATE, end=END_DATE, progress=False)
+def prepare_data(ticker, start=START_DATE, end=END_DATE):
+    df = yf.download(ticker, start=start, end=end, progress=False)
     if df.empty or len(df) < 210:
         return None
     if isinstance(df.columns, pd.MultiIndex):
@@ -724,13 +724,13 @@ def run_backtest():
 
     # 進場條件sweep：每輪淨係跑「未有結論」嘅sweep，已有結論嘅function保留喺上面，
     # 想重新驗證隨時加返入呢個list。每個sweep要重新掃描全部股票N次，好食run time。
-    # 已有結論(維持default)：Breakout relvol_min / change_from_open_min / extension_max、
-    #   Dip_Buy rsi_oversold_max / volume_support_min、Pullback volatility_max。
+    # 已有結論(維持default)：Breakout relvol_min / change_from_open_min / extension_max / rsi_max、
+    #   Dip_Buy rsi_oversold_max / volume_support_min / rsi_ceiling、Pullback volatility_max。
+    #   (rsi_max收緊到60：訓練期Breakout訊號46→4次，樣本冇晒；rsi_ceiling：Dip_Buy本身已要求
+    #    過去5日RSI<30，入場時RSI幾乎冇可能>65，加上限只少咗2次訊號，驗證期仲差少少)
     # 已採用：Pullback volume_drying_max=0.35。
-    active_sweeps = [
-        ("Breakout rsi_max", analyze_breakout_rsimax_sweep),
-        ("Dip_Buy rsi_ceiling", analyze_dipbuy_rsiceiling_sweep),
-    ]
+    # 進場條件調整已告一段落(9個參數試完)，下一步係2018-2022 holdout測試(見backtest_holdout.py)。
+    active_sweeps = []
     print(f"\n開始進場條件sweep（{' / '.join(n for n, _ in active_sweeps)}，重用已下載數據，唔會再call yfinance）...")
     sweep_results = [(name, fn(data_cache, spy_filter)) for name, fn in active_sweeps]
 

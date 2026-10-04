@@ -1,0 +1,29 @@
+name: backtest_holdout_2018_2022
+
+# 2018-2022 出樣本外 holdout 測試：設定已鎖定，只用嚟做一次性驗證，唔係用嚟調參數。
+on:
+  workflow_dispatch:
+
+jobs:
+  run-holdout:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 把房間的野拿出黎
+        uses: actions/checkout@v4
+
+      - name: 安裝 Python 大腦
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 安裝小幫手工具
+        run: pip install yfinance pandas numpy
+
+      - name: 跑2018-2022 holdout測試
+        run: python -u backtest_holdout.py
+
+      - name: 上傳holdout結果CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: holdout-results
+          path: holdout_results.csv

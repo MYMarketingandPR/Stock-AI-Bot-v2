@@ -1,11 +1,12 @@
-18:36:57 成分股來源：fja05680/sp500 S&P 500 Historical Components & Changes.csv，2595個日期，1996-01-02 至 2019-01-11
-18:36:57 2005-2026曾經係成分股：848隻
-18:39:44 下載第1輪：有數據 483，未有 366
-18:41:15 下載第2輪：有數據 483，未有 366
-18:43:07 下載第3輪：有數據 483，未有 366
-18:43:38 數據覆蓋率（每年1月前月尾）：2004：254/501（51%）；2005：266/501（53%）；2006：276/501（55%）；2007：293/502（58%）；2008：300/501（60%）；2009：312/501（62%）；2010：321/501（64%）；2011：333/501（66%）；2012：345/501（69%）；2013：351/502（70%）；2014：358/504（71%）；2015：374/506（74%）；2016：393/516（76%）；2017：408/515（79%）；2018：418/504（83%）；2019：420/504（83%）；2020：420/504（83%）；2021：420/504（83%）；2022：421/504（84%）；2023：421/504（84%）；2024：423/504（84%）；2025：424/504（84%）
-18:43:39 換倉月份：262
-18:43:40 完成 前10隻
-18:43:40 完成 前20隻
-18:43:41 完成 前50隻
-18:43:46 完成
+18:45:12 fja05680數據用唔到（max() arg is an empty sequence），改用Wikipedia
+18:45:12 Wikipedia表0欄位：['Symbol', 'Security', 'GICS Sector', 'GICS Sub-Industry', 'Headquarters Location', 'Date added', 'CIK', 'Founded']
+18:45:12 Wikipedia表1欄位：['vteS&P 500 companies', 'vteS&P 500 companies.1']
+18:45:12 出錯：Traceback (most recent call last):
+  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/momentum_v1.py", line 326, in <module>
+    main()
+  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/momentum_v1.py", line 230, in main
+    members_fn, source = sp500_history()
+  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/momentum_v1.py", line 98, in sp500_history
+    date_col = [c for c in ch.columns if "date" in c.lower()][0]
+AttributeError: 'NoneType' object has no attribute 'columns'
+

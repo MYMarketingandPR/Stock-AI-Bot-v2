@@ -56,32 +56,39 @@ def norm(t):
 def sp500_history():
     """回傳 members(d)：d嗰日嘅標普500成分股。
     首選：fja05680/sp500（GitHub公開數據，逐日列出當時成分股）；後備：Wikipedia變動表倒推。"""
-    try:
-        api = requests.get("https://api.github.com/repos/fja05680/sp500/contents/", headers=HDR, timeout=30).json()
-        import re
-        cands = []
-        for f in api:
-            n = f["name"]
-            mm = re.search(r"\((\d{2})-(\d{2})-(\d{4})\)\.csv$", n)
-            if n.startswith("S&P 500 Historical Components") and mm:
-                cands.append((pd.Timestamp(f"{mm.group(3)}-{mm.group(1)}-{mm.group(2)}"), n))
-        name = max(cands)[1]           # 檔名日期最新嗰個（唔好揀冇日期嘅舊檔）
-        url = "https://raw.githubusercontent.com/fja05680/sp500/master/" + requests.utils.quote(name)
-        df = pd.read_csv(io.StringIO(requests.get(url, headers=HDR, timeout=60).text))
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.sort_values("date")
-        snaps = [(d, set(norm(t) for t in str(x).split(","))) for d, x in zip(df["date"], df["tickers"])]
-        log(f"成分股來源：fja05680/sp500 {name}，{len(snaps)}個日期，{snaps[0][0].date()} 至 {snaps[-1][0].date()}")
-        if snaps[-1][0] < pd.Timestamp("2026-01-01"):
-            raise RuntimeError(f"成分股數據只到 {snaps[-1][0].date()}，太舊")
-        dates = [d for d, _ in snaps]
+    base = "https://raw.githubusercontent.com/fja05680/sp500/master/"
+    for name in ["S&P 500 Historical Components & Changes (Updated).csv",
+                 "S&P 500 Historical Components & Changes.csv"]:
+        try:
+            df = pd.read_csv(io.StringIO(requests.get(base + requests.utils.quote(name), headers=HDR, timeout=60).text))
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.sort_values("date")
+            snaps = [(d, set(norm(t) for t in str(x).split(","))) for d, x in zip(df["date"], df["tickers"])]
+            log(f"成分股來源：fja05680/sp500 {name}，{len(snaps)}個日期，{snaps[0][0].date()} 至 {snaps[-1][0].date()}，"
+                f"最後一日{len(snaps[-1][1])}隻")
+            if snaps[-1][0] < pd.Timestamp("2025-06-01"):
+                log("　太舊，唔用")
+                continue
+            dates = np.array([d for d, _ in snaps], dtype="datetime64[ns]")
 
-        def members(d):
-            i = int(np.searchsorted(np.array(dates, dtype="datetime64[ns]"), np.datetime64(d), side="right")) - 1
-            return snaps[max(i, 0)][1]
-        return members, f"fja05680/sp500（{name}）"
+            def members(d, snaps=snaps, dates=dates):
+                i = int(np.searchsorted(dates, np.datetime64(d), side="right")) - 1
+                return snaps[max(i, 0)][1]
+            return members, f"fja05680/sp500（{name}，到{snaps[-1][0].date()}）"
+        except Exception as e:
+            log(f"{name} 用唔到：{e}")
+    try:
+        t = pd.read_csv(io.StringIO(requests.get(base + "sp500_ticker_start_end.csv", headers=HDR, timeout=60).text))
+        log(f"sp500_ticker_start_end.csv 欄位：{list(t.columns)}，{len(t)}行")
+        t["start_date"] = pd.to_datetime(t["start_date"])
+        t["end_date"] = pd.to_datetime(t["end_date"])
+
+        def members(d, t=t):
+            ok = (t["start_date"] <= d) & (t["end_date"].isna() | (t["end_date"] >= d))
+            return set(norm(x) for x in t.loc[ok, "ticker"])
+        return members, "fja05680/sp500（sp500_ticker_start_end.csv）"
     except Exception as e:
-        log(f"fja05680數據用唔到（{e}），改用Wikipedia")
+        log(f"sp500_ticker_start_end.csv 用唔到：{e}，改用Wikipedia")
     html = requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", headers=HDR, timeout=30).text
     tables = pd.read_html(io.StringIO(html))
     for k, t in enumerate(tables):

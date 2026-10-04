@@ -48,6 +48,6 @@ jobs:
           git fetch origin research-results
           git checkout -B research-results origin/research-results
           cp /tmp/out/* .
-          for f in ${{ inputs.outputs }}; do [ -f "$f" ] && git add "$f"; done
+          for f in ${{ inputs.outputs }}; do if [ -f "$f" ]; then git add "$f"; fi; done
           git commit -m "${{ inputs.script }} results (run ${{ github.run_id }})" || echo "冇改變"
           for i in 1 2 3; do git push origin research-results && break; git pull --rebase origin research-results; done

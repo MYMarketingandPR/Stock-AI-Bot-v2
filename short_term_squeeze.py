@@ -95,14 +95,17 @@ def parse_num(x):
         return np.nan
 
 
-SEC_HDR = {"User-Agent": "Stock-AI-Bot research script (GitHub Actions)", "Accept-Encoding": "gzip, deflate"}
+SEC_HDR = {"User-Agent": "StockAIBot research stockaibot@users.noreply.github.com", "Accept-Encoding": "gzip, deflate"}
 SHARES_LAG_DAYS = 10
 
 
 def fetch_shares_sec():
     """SEC EDGAR：每季公司封面上嘅「已發行股數」（point-in-time）。
     Finviz流通股冇歷史 + GitHub主機被Finviz封鎖，所以用已發行股數代替流通股。"""
-    m = requests.get("https://www.sec.gov/files/company_tickers.json", headers=SEC_HDR, timeout=30).json()
+    r = requests.get("https://www.sec.gov/files/company_tickers.json", headers=SEC_HDR, timeout=30)
+    if not r.ok or not r.text.strip().startswith("{"):
+        raise RuntimeError(f"SEC拒絕：HTTP {r.status_code} {r.text[:200]}")
+    m = r.json()
     cik2t = {}
     for v in m.values():
         cik2t.setdefault(int(v["cik_str"]), str(v["ticker"]).upper().replace(".", "-"))

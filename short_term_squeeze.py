@@ -5,7 +5,7 @@ short_term_squeeze.py — 短炒回測②：Short Squeeze（照用戶Finviz篩�
 數據：
   - 沽空股數：FINRA每半個月公佈嘅數據（2021-06起先有交易所上市股票）。
     結算日之後9個交易日先當係「已經知道」（FINRA大約7個交易日後公佈，留多兩日）。
-  - 流通股（Float）：冇免費歷史數據，而且Finviz封鎖GitHub主機；改用SEC每季公佈嘅「已發行股數」（當時已知，冇偷睇未來），\n    已發行股數 ≥ 流通股，所以「沽空比例」會計細咗，條件其實比Finviz嚴。股數日期後10日先當已知。
+  - 流通股（Float）：冇免費歷史數據，而且Finviz封鎖GitHub主機；改用yfinance嘅「歷史已發行股數」（當時嘅數字），\n    已發行股數 ≥ 流通股，所以「沽空比例」會計細咗，條件其實比Finviz嚴。股數日期後10日先當已知。
   - 機構持股 >50%、機構買賣 >0%：冇免費歷史數據，測試唔到，唔用。
   - 可以買期權（Optionable）：冇歷史數據，唔用。
 信號（每日收市後）：
@@ -17,7 +17,7 @@ short_term_squeeze.py — 短炒回測②：Short Squeeze（照用戶Finviz篩�
   - 當日成交量 > 50萬股（Current Volume Over 500K）
   - 同一隻股票出咗信號之後20個交易日內唔再計（避免重複）
 買入時間、賣出方法、組合、成本：同short_term_gap.py一樣（$10,000，最多3隻，每次0.15%）。
-股票池：FINRA曾經被沽空50萬股以上、SEC數據曾經少過1億股嘅股票（⚠️已除牌公司冇價格數據，有倖存者偏差）。
+股票池：FINRA曾經被沽空50萬股以上嘅股票（⚠️已除牌公司冇價格數據，有倖存者偏差）。
 測試期：2021-07至2026-09；前半2021-07至2023-12，後半2024-01至2026-09。
 揀法：同short_term_gap.py一樣。
 輸出：short_squeeze_results.csv、short_squeeze_trades.csv.gz
@@ -95,41 +95,32 @@ def parse_num(x):
         return np.nan
 
 
-SEC_HDR = {"User-Agent": "StockAIBot research stockaibot@users.noreply.github.com", "Accept-Encoding": "gzip, deflate"}
 SHARES_LAG_DAYS = 10
 
 
-def fetch_shares_sec():
-    """SEC EDGAR：每季公司封面上嘅「已發行股數」（point-in-time）。
-    Finviz流通股冇歷史 + GitHub主機被Finviz封鎖，所以用已發行股數代替流通股。"""
-    r = requests.get("https://www.sec.gov/files/company_tickers.json", headers=SEC_HDR, timeout=30)
-    if not r.ok or not r.text.strip().startswith("{"):
-        raise RuntimeError(f"SEC拒絕：HTTP {r.status_code} {r.text[:200]}")
-    m = r.json()
-    cik2t = {}
-    for v in m.values():
-        cik2t.setdefault(int(v["cik_str"]), str(v["ticker"]).upper().replace(".", "-"))
-    rows = []
-    for y in range(2020, 2027):
-        for q in range(1, 5):
-            if (y, q) > (2026, 3):
-                break
-            url = f"https://data.sec.gov/api/xbrl/frames/dei/EntityCommonStockSharesOutstanding/shares/CY{y}Q{q}I.json"
+def fetch_shares(tickers):
+    """yfinance get_shares_full：每隻股票嘅歷史已發行股數（當時公佈嘅數字，冇按之後拆股調整）。
+    一隻一隻慢慢攞，避免被Yahoo限制。"""
+    import yfinance as yf
+    rows, fails = [], 0
+    for n, t in enumerate(tickers):
+        for attempt in range(3):
             try:
-                r = requests.get(url, headers=SEC_HDR, timeout=60)
-                if not r.ok:
-                    log(f"SEC {y}Q{q}：HTTP {r.status_code}")
-                    continue
-                for d in r.json().get("data", []):
-                    t = cik2t.get(int(d["cik"]))
-                    if t:
-                        rows.append((t, pd.Timestamp(d["end"]), float(d["val"])))
-            except Exception as e:
-                log(f"SEC {y}Q{q} 出錯：{e}")
-            time.sleep(0.3)
+                ser = yf.Ticker(t).get_shares_full(start="2020-06-01")
+                if ser is not None and len(ser):
+                    ser = ser[~ser.index.duplicated(keep="last")]
+                    idx = pd.DatetimeIndex(ser.index).tz_localize(None).normalize()
+                    rows += [(t, d, float(v)) for d, v in zip(idx, ser.values)]
+                break
+            except Exception:
+                time.sleep(5 * (attempt + 1))
+        else:
+            fails += 1
+        time.sleep(0.4)
+        if (n + 1) % 200 == 0:
+            log(f"股數進度 {n + 1}/{len(tickers)}，失敗 {fails}")
     sh = pd.DataFrame(rows, columns=["ticker", "end", "shares"])
-    sh = sh.groupby(["ticker", "end"], as_index=False)["shares"].sum()   # 多類股份加埋
-    log(f"SEC已發行股數：{sh['ticker'].nunique()}隻股票，{len(sh)}個數據點")
+    log(f"歷史股數：{sh['ticker'].nunique()}/{len(tickers)}隻有數據，失敗 {fails}")
     return sh
 
 
@@ -140,14 +131,14 @@ def main():
     cand = si.groupby("ticker")["short"].max()
     cand = set(cand[cand >= 500_000].index)
     log(f"曾經被沽空50萬股以上：{len(cand)}隻")
-    sh = fetch_shares_sec()
-    small = set(sh.loc[sh["shares"] < 100_000_000, "ticker"])
-    cand = sorted(cand & small)
-    log(f"同時曾經已發行股數少過1億：{len(cand)}隻")
+    cand = sorted(cand)
     spy = download(["SPY", "QQQ"], "2020-06-01", "2026-10-01")["SPY"]["Close"]
     prices = download(cand, "2020-06-01", "2026-10-01")
     log(f"有價格數據：{len(prices)}/{len(cand)}隻")
-    prices = {t: d for t, d in prices.items() if (d["Close"] > 15).any()}
+    prices = {t: d for t, d in prices.items() if (d["Close"] > 15).any()
+              and (d["Volume"] > 500_000).any()}
+    log(f"曾經高過$15而且有過50萬股成交：{len(prices)}隻，開始攞歷史股數")
+    sh = fetch_shares(sorted(prices))
     bday = pd.offsets.BDay(LAG_BDAYS)
 
     signals = []
@@ -182,9 +173,9 @@ def main():
     trades = build_trades(signals, prices, spy)
     log(f"交易紀錄：{len(trades)}行，開始組合模擬")
     trades.to_csv("short_squeeze_trades.csv.gz", index=False, compression="gzip")
-    notes = [f"股票池：FINRA曾被沽空50萬股以上、SEC曾經<1億股：{len(cand)}隻；有價格數據而且曾經高過$15：{len(prices)}隻；"
+    notes = [f"股票池：FINRA曾被沽空50萬股以上：{len(cand)}隻；有價格數據而且曾經高過$15：{len(prices)}隻；"
              f"信號共{len(signals)}個",
-             "⚠️ 用SEC已發行股數代替流通股；機構持股/機構買賣/期權條件測試唔到",
+             "⚠️ 用歷史已發行股數代替流通股；機構持股/機構買賣/期權條件測試唔到",
              "成本每次買或賣0.15%；組合$10,000最多同時3隻"]
     L, _ = report(trades, prices, spy, PERIODS, "=== 短炒回測②：Short Squeeze（規則預先登記，見short_term_squeeze.py）===", notes)
     tops = trades[(trades["entry"] == "信號日收市買") & (trades["exit"] == "揸10日")]

@@ -33,14 +33,16 @@ jobs:
         run: python -u "${{ inputs.script }}"
 
       - name: 上傳結果
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: research-output
           path: ${{ inputs.outputs }}
 
       - name: 將結果放去 research-results 分支
+        if: always()
         run: |
-          mkdir -p /tmp/out && cp ${{ inputs.outputs }} /tmp/out/
+          mkdir -p /tmp/out && cp ${{ inputs.outputs }} /tmp/out/ || true
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git fetch origin research-results
@@ -48,4 +50,4 @@ jobs:
           cp /tmp/out/* .
           git add ${{ inputs.outputs }}
           git commit -m "${{ inputs.script }} results (run ${{ github.run_id }})" || echo "冇改變"
-          git push origin research-results
+          for i in 1 2 3; do git push origin research-results && break; git pull --rebase origin research-results; done

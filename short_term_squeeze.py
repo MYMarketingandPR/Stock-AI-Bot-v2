@@ -59,9 +59,12 @@ def fetch_finra():
     for d, txt in zip(days, texts):
         if not txt:
             continue
-        df = pd.read_csv(io.StringIO(txt), sep="|", quotechar='"', dtype=str)
-        df = df[["symbolCode", "marketClassCode", "currentShortPositionQuantity", "settlementDate"]]
-        frames.append(df)
+        try:
+            df = pd.read_csv(io.StringIO(txt), sep="|", quotechar='"', dtype=str, on_bad_lines="skip")
+            df = df[["symbolCode", "marketClassCode", "currentShortPositionQuantity", "settlementDate"]]
+            frames.append(df)
+        except Exception as e:
+            print(f"FINRA {d:%Y-%m-%d} 讀取失敗：{e}")
     si = pd.concat(frames, ignore_index=True)
     si["short"] = pd.to_numeric(si["currentShortPositionQuantity"], errors="coerce")
     si["settle"] = pd.to_datetime(si["settlementDate"])
@@ -136,4 +139,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        tb = traceback.format_exc()
+        print(tb)
+        pd.DataFrame({"report": ["❌ 程式出錯：", *tb.splitlines()]}).to_csv(
+            "short_squeeze_results.csv", index=False, encoding="utf-8-sig")
+        pd.DataFrame().to_csv("short_squeeze_trades.csv.gz", compression="gzip")
+        raise

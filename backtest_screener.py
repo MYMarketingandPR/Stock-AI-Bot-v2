@@ -87,6 +87,13 @@ DIP_BUY_VOLUME_SUPPORT_SWEEP = [1.2, 1.5, 1.8, 2.0]
 #      volume_drying，樣本已經細(27/21)，兩個方向都淺試，避免再進一步縮細樣本。
 PULLBACK_VOLATILITY_SWEEP = [0.015, 0.02, 0.025, 0.035]
 
+# 🧪 第三輪(用戶提議)：Breakout/Dip_Buy加RSI上限，試收緊到60。
+#   5. Breakout rsi_max：現時85(好寬鬆)。Breakout依賴「爆量+強勢上升日」先觸發，
+#      RSI<60可能同呢個定義有張力，試完要睇清楚樣本有冇縮到太細。
+BREAKOUT_RSI_MAX_SWEEP = [85, 75, 65, 60]
+#   6. Dip_Buy rsi_ceiling：現時100(即冇限制)。試收緊，確保「反彈初段先入」。
+DIP_BUY_RSI_CEILING_SWEEP = [100, 70, 65, 60]
+
 
 def get_spy_data():
     try:
@@ -652,6 +659,26 @@ def analyze_pullback_volatility_sweep(data_cache, spy_filter):
         param_label="volatility_max", sweep_values=PULLBACK_VOLATILITY_SWEEP,
         make_kwargs=lambda v: {"pullback_kwargs": {"volatility_max": v}},
         focus_strategy="Pullback (回踩)", old_default=0.025,
+    )
+
+
+def analyze_breakout_rsimax_sweep(data_cache, spy_filter):
+    return analyze_entry_condition_sweep(
+        data_cache, spy_filter,
+        label="Breakout進場條件sweep（固定用全部股票池、單一倉位25%，淨係換Breakout嫁rsi_max門檻，現時default=85，試收緊到60）",
+        param_label="rsi_max", sweep_values=BREAKOUT_RSI_MAX_SWEEP,
+        make_kwargs=lambda v: {"breakout_kwargs": {"rsi_max": v}},
+        focus_strategy="Breakout (突破)", old_default=85,
+    )
+
+
+def analyze_dipbuy_rsiceiling_sweep(data_cache, spy_filter):
+    return analyze_entry_condition_sweep(
+        data_cache, spy_filter,
+        label="Dip_Buy進場條件sweep（固定用全部股票池、單一倉位25%，淨係換Dip_Buy嫁rsi_ceiling門檻，現時default=100即冇限制，試收緊到60）",
+        param_label="rsi_ceiling", sweep_values=DIP_BUY_RSI_CEILING_SWEEP,
+        make_kwargs=lambda v: {"dipbuy_kwargs": {"rsi_ceiling": v}},
+        focus_strategy="Dip_Buy (撈底)", old_default=100,
     )
 
 

@@ -119,10 +119,11 @@ def compute_indicators(df):
 # 🧪 relvol_min(已test，放寬冇幫助，維持2.5)、change_from_open_min、extension_max
 #    開放做參數。change_from_open_min=2%(現時)係「收市要比開市高幾多%」先確認；
 #    extension_max=1.20(現時)係「股價唔可以高過SMA50幾多倍」(太延伸就唔追)。
-#    Breakout樣本一直最少(全期得70幾次)，想試吓放寬change_from_open_min會唔會
-#    攞到更多高質素訊號；extension_max兩個方向都想試。
+#    rsi_max=85(現時，相對寬鬆)係RSI上限。用戶想試收緊到60——要留意Breakout依賴
+#    「爆量+跳空+強勢上升日」先觸發，RSI<60呢個更嚴嘅上限好可能同呢個定義有張力，
+#    有機會令樣本縮到太細，試完要睇實際訊號次數先可信。
 # ==========================================
-def check_breakout_signal(row, spy_is_bullish, relvol_min=2.5, change_from_open_min=0.02, extension_max=1.20):
+def check_breakout_signal(row, spy_is_bullish, relvol_min=2.5, change_from_open_min=0.02, extension_max=1.20, rsi_max=85):
     try:
         daily_range = row["High"] - row["Low"]
         close_strong = row["Close"] >= row["Low"] + (0.5 * daily_range) if daily_range > 0 else True
@@ -137,7 +138,7 @@ def check_breakout_signal(row, spy_is_bullish, relvol_min=2.5, change_from_open_
             and row["ChangeFromOpen"] >= change_from_open_min
             and row["RelVol"] >= relvol_min
             and row["DailyRet"] < 0.10
-            and row["RSI14"] < 85
+            and row["RSI14"] < rsi_max
             and close_strong
         )
     except Exception: return False
@@ -199,8 +200,11 @@ def check_pullback_signal(row, spy_is_bullish, df_history,
 # 🧪 rsi_oversold_max(已test，放寬會insample過擬合，維持30)、volume_support_min
 #    開放做參數。volume_support_min=1.2(現時)係「低位果日成交量要夠20日均量1.2倍」
 #    先算「有人接貨」，數字愈大代表要求愈強嫁接貨確認。
+# 🧪 新增rsi_ceiling(default=100即冇限制，唔影響main.py現有行為)：用戶想試加條件
+#    「入場嗰日RSI要細過60」，即係「反彈初段先入，唔好等反彈到接近超買先追」，
+#    同Dip_Buy「抄底、早啲入」嫁邏輯一致，值得試。
 # ==========================================
-def check_dip_buying_signal(row, df_history, rsi_oversold_max=30, volume_support_min=1.2):
+def check_dip_buying_signal(row, df_history, rsi_oversold_max=30, volume_support_min=1.2, rsi_ceiling=100):
     try:
         if len(df_history) < 5: return False
 
@@ -224,8 +228,11 @@ def check_dip_buying_signal(row, df_history, rsi_oversold_max=30, volume_support
         # 6. 當日必須收陽線
         buyers_stepped_in = row["Close"] > row["Open"]
 
-        return (above_200 and recent_oversold and reclaimed_ema9 and 
-                macd_improving_2days and volume_support and buyers_stepped_in)
+        # 7. 🧪 反彈初段確認：入場嗰日RSI唔可以太高(default=100即冇限制)
+        not_too_late = row["RSI14"] < rsi_ceiling
+
+        return (above_200 and recent_oversold and reclaimed_ema9 and
+                macd_improving_2days and volume_support and buyers_stepped_in and not_too_late)
     except Exception: return False
 
 def candidate_snapshot_dict(ticker, row):

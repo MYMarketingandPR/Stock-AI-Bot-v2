@@ -722,21 +722,25 @@ def run_backtest():
         mega_only_df, "只用 Mega Cap，按策略類型分級(Breakout加碼、Pullback減碼，Mega Cap入面冇High Beta所以組別倍數都係1.0)"
     )
 
-    print("\n開始進場條件sweep（Pullback volatility/Breakout change_open/Breakout extension/"
-          "Dip_Buy volume_support，重用已下載數據，唔會再call yfinance）...")
-    pullback_sweep_result = analyze_pullback_sweep(data_cache, spy_filter)
-    pullback_vol_sweep_result = analyze_pullback_volatility_sweep(data_cache, spy_filter)
-    breakout_changeopen_result = analyze_breakout_changeopen_sweep(data_cache, spy_filter)
-    breakout_extension_result = analyze_breakout_extension_sweep(data_cache, spy_filter)
-    dipbuy_volume_result = analyze_dipbuy_volume_sweep(data_cache, spy_filter)
+    # 進場條件sweep：每輪淨係跑「未有結論」嘅sweep，已有結論嘅function保留喺上面，
+    # 想重新驗證隨時加返入呢個list。每個sweep要重新掃描全部股票N次，好食run time。
+    # 已有結論(維持default)：Breakout relvol_min / change_from_open_min / extension_max、
+    #   Dip_Buy rsi_oversold_max / volume_support_min、Pullback volatility_max。
+    # 已採用：Pullback volume_drying_max=0.35。
+    active_sweeps = [
+        ("Breakout rsi_max", analyze_breakout_rsimax_sweep),
+        ("Dip_Buy rsi_ceiling", analyze_dipbuy_rsiceiling_sweep),
+    ]
+    print(f"\n開始進場條件sweep（{' / '.join(n for n, _ in active_sweeps)}，重用已下載數據，唔會再call yfinance）...")
+    sweep_results = [(name, fn(data_cache, spy_filter)) for name, fn in active_sweeps]
 
     summary_lines = [
         "=== 回測報告：訓練期揀參數 → 驗證期做Out-of-Sample測試（防過擬合）===",
         f"每段獨立用返 ${INITIAL_CAPITAL:,.2f} 本金起跑（冇槓桿，資金唔夠嘅訊號會被跳過）",
-        "⚠️ Dip_Buy+High Beta已經結構性剔除（見strategy_core.DIP_BUY_EXCLUDED_GROUPS，"
-        "原因同caveat見code comment），下面全部結果都已經反映呢個改動。",
-        "⚠️ Breakout relvol_min同Dip_Buy rsi_oversold_max之前已經sweep過，結論係維持現有"
-        "default(放寬都冇幫助甚至過擬合)，呢次冇再放落report，淨係試新一批進場條件。",
+        "⚠️ Dip_Buy+High Beta已經結構性剔除；Pullback volume_drying_max已採用0.35（見strategy_core code comment）。",
+        "⚠️ 以下進場條件之前已經sweep過、結論係維持現有default，呢次冇再跑："
+        "Breakout relvol_min/change_from_open_min/extension_max、Dip_Buy rsi_oversold_max/volume_support_min、"
+        "Pullback volatility_max。",
         "",
     ]
     summary_lines += full_result["lines"]
@@ -746,16 +750,9 @@ def run_backtest():
     summary_lines += tiered_result["lines"]
     summary_lines += [""]
     summary_lines += mega_tiered_result["lines"]
-    summary_lines += [""]
-    summary_lines += pullback_sweep_result["lines"]
-    summary_lines += [""]
-    summary_lines += pullback_vol_sweep_result["lines"]
-    summary_lines += [""]
-    summary_lines += breakout_changeopen_result["lines"]
-    summary_lines += [""]
-    summary_lines += breakout_extension_result["lines"]
-    summary_lines += [""]
-    summary_lines += dipbuy_volume_result["lines"]
+    for _, res in sweep_results:
+        summary_lines += [""]
+        summary_lines += res["lines"]
     summary_lines += [
         "",
         "--- 詳細交易紀錄（下面全部用「全部股票池、單一倉位%」版本；period=訓練/驗證；"
@@ -805,23 +802,14 @@ def run_backtest():
     tiered_cagr_print = f"{tiered_oos['cagr']:+.2f}%" if tiered_oos is not None else "N/A"
     mega_tiered_oos = mega_tiered_result["valid_oos"]
     mega_tiered_cagr_print = f"{mega_tiered_oos['cagr']:+.2f}%" if mega_tiered_oos is not None else "N/A"
-    pb_valid_result = pullback_sweep_result.get("valid_result")
-    pb_cagr_print = f"{pb_valid_result['cagr']:+.2f}%" if pb_valid_result is not None else "N/A"
-    pbv_valid_result = pullback_vol_sweep_result.get("valid_result")
-    pbv_cagr_print = f"{pbv_valid_result['cagr']:+.2f}%" if pbv_valid_result is not None else "N/A"
-    boc_valid_result = breakout_changeopen_result.get("valid_result")
-    boc_cagr_print = f"{boc_valid_result['cagr']:+.2f}%" if boc_valid_result is not None else "N/A"
-    boe_valid_result = breakout_extension_result.get("valid_result")
-    boe_cagr_print = f"{boe_valid_result['cagr']:+.2f}%" if boe_valid_result is not None else "N/A"
-    dbv_valid_result = dipbuy_volume_result.get("valid_result")
-    dbv_cagr_print = f"{dbv_valid_result['cagr']:+.2f}%" if dbv_valid_result is not None else "N/A"
-    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本，四種資金分配方式對比 + 5個進場條件sweep）。"
+    sweep_prints = []
+    for name, res in sweep_results:
+        vr = res.get("valid_result")
+        sweep_prints.append(f"{name} sweep後：{vr['cagr']:+.2f}%" if vr is not None else f"{name} sweep後：N/A")
+    print(f"\n✅ 已完成（訓練/驗證分段out-of-sample版本，四種資金分配方式對比 + {len(sweep_results)}個進場條件sweep）。"
           f"全部股票池(單一%)：{valid_cagr_print}；Mega-Cap-only(單一%)：{mega_cagr_print}；"
           f"全部股票池(分級)：{tiered_cagr_print}；Mega-Cap-only(分級)：{mega_tiered_cagr_print}；"
-          f"Pullback volume sweep後：{pb_cagr_print}；Pullback volatility sweep後：{pbv_cagr_print}；"
-          f"Breakout change_open sweep後：{boc_cagr_print}；Breakout extension sweep後：{boe_cagr_print}；"
-          f"Dip_Buy volume_support sweep後：{dbv_cagr_print}。"
-          f"已存到 backtest_results.csv")
+          + "；".join(sweep_prints) + "。已存到 backtest_results.csv")
 
 
 if __name__ == "__main__":

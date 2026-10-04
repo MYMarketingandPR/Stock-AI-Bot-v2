@@ -1,0 +1,14 @@
+report
+HTTP 200
+.gitignore | 816
+LICENSE | 1100
+PIT to Ticker Delta.ipynb | 9868
+README.md | 4847
+S&P 500 Historical Components & Changes (Updated).csv | 5530907
+S&P 500 Historical Components & Changes.csv | 7791584
+sp500.csv | 53646
+sp500.ipynb | 358651
+sp500_by_date.ipynb | 17383
+sp500_changes_since_2019.csv | 3389
+sp500_historical.ipynb | 53395
+sp500_ticker_start_end.csv | 28058

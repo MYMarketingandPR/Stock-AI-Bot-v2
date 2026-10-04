@@ -96,8 +96,9 @@ def main():
     cand = si.groupby("ticker")["short"].max()
     cand = sorted(cand[cand >= 500_000].index)
     print(f"曾經被沽空50萬股以上：{len(cand)}隻")
-    prices = download(cand + ["SPY"], "2020-06-01", "2026-10-01")
-    spy = prices.pop("SPY")["Close"]
+    spy = download(["SPY", "QQQ"], "2020-06-01", "2026-10-01")["SPY"]["Close"]
+    prices = download(cand, "2020-06-01", "2026-10-01")
+    print(f"有價格數據：{len(prices)}/{len(cand)}隻")
     prices = {t: d for t, d in prices.items() if (d["Close"] > 15).any()}
     floats = fetch_float(sorted(prices))
     bday = pd.offsets.BDay(LAG_BDAYS)
@@ -125,7 +126,8 @@ def main():
     print(f"信號數：{len(signals)}")
     trades = build_trades(signals, prices, spy)
     trades.to_csv("short_squeeze_trades.csv.gz", index=False, compression="gzip")
-    notes = [f"股票池：FINRA曾被沽空50萬股以上、有價格數據、曾經高過$15：{len(prices)}隻；信號共{len(signals)}個",
+    notes = [f"股票池：FINRA曾被沽空50萬股以上{len(cand)}隻；有價格數據而且曾經高過$15：{len(prices)}隻；"
+             f"有流通股數據：{sum(1 for v in floats.values() if v > 0)}隻；信號共{len(signals)}個",
              "⚠️ 流通股用今日數字；機構持股/機構買賣/期權條件測試唔到",
              "成本每次買或賣0.15%；組合$10,000最多同時3隻"]
     L, _ = report(trades, prices, spy, PERIODS, "=== 短炒回測②：Short Squeeze（規則預先登記，見short_term_squeeze.py）===", notes)

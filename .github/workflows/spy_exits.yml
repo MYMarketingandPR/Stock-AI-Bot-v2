@@ -1,0 +1,31 @@
+name: spy_exits
+
+# SPY止損位研究（規則預先登記喺spy_exits.py）
+on:
+  workflow_dispatch:
+
+jobs:
+  run-spy-exits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 把房間的野拿出黎
+        uses: actions/checkout@v4
+
+      - name: 安裝 Python 大腦
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 安裝小幫手工具
+        run: pip install yfinance pandas numpy
+
+      - name: 跑SPY止損位研究
+        run: python -u spy_exits.py
+
+      - name: 上傳結果
+        uses: actions/upload-artifact@v4
+        with:
+          name: spy-exits-results
+          path: |
+            spy_exits_results.csv
+            spy_exits_grid.csv

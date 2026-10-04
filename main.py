@@ -1,252 +1,218 @@
+"""
+main.py — SPY每日訊號機械人（建議方案）
+
+規則（同 spy_bottoms_v2.py 嘅「E4」完全一樣，研究結果見嗰個檔案）：
+1. 基本規則：SPY收市低過200日線2% → 賣出；收市高過200日線2% → 買返。
+2. 提早買入：手上係現金嘅時候，如果同一日出現「三合一」：
+   RSI(14) < 30 + VIX ≥ 30 + 成交量 ≥ 50日平均2倍 → 全倉買入。
+3. 提早買入之後：收市比買入價跌5% → 止損賣出；升到高過200日線2% → 變返正常持有。
+
+回測（1994-2026，每次買賣0.1%成本）：每年 +11.5%，最大跌幅 -27%（SPY長揸 +10.9%，-55%）。
+⚠️ 過去表現唔代表將來；呢個只係按規則提你，唔係投資建議。
+
+點運作：每日美股收市後由GitHub Actions執行。程式用SPY由1993年至今嘅數據，由頭按規則行一次，
+得出「今日應該持有定現金」，同昨日比較，有轉變就提你下一個交易日收市前買入/賣出。
+（回測都係用「今日收市判斷、下一日收市交易」，所以咁做同回測一致。）
+
+用法：python main.py               （正常，會發Telegram）
+      python main.py --date 2020-03-12 --dry   （睇返某一日會出咩訊息，唔發Telegram）
+"""
 import os
-import re
-import time
+import sys
 from datetime import datetime
-import requests
+from zoneinfo import ZoneInfo
+
 import numpy as np
 import pandas as pd
-import yfinance as yf
-from groq import Groq
+import requests
 
-from strategy_core import (
-    compute_indicators,
-    check_breakout_signal,
-    MEGA_CAP_TICKERS,
-)
+BAND = 0.02          # 200日線上下緩衝
+RSI_MAX = 30
+VIX_MIN = 30
+VOL_MULT = 2.0
+STOP = 0.05          # 提早買入後嘅止損
 
-# ==========================================
-# 0. 股票池（100% 集中火力於 72% 勝率的 Mega Cap）
-# ==========================================
-WATCHLIST = MEGA_CAP_TICKERS
-
-# ==========================================
-# 1. 鑰匙設定
-# ==========================================
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 SHEET_WEBHOOK_URL = os.environ.get("SHEET_WEBHOOK_URL")
 
-# ==========================================
-# 2. 推送與紀錄模組
-# ==========================================
+
+# ---------------- 數據 ----------------
+def load_data():
+    import yfinance as yf
+
+    def dl(t, adjust):
+        df = yf.download(t, start="1993-01-01", auto_adjust=adjust, progress=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return df
+    adj = dl("SPY", True)
+    raw = dl("SPY", False)
+    vix = dl("^VIX", True)["Close"]
+    df = pd.DataFrame({
+        "adj": adj["Close"].astype(float),           # 已計息價格：用嚟計訊號（同回測一樣）
+        "raw": raw["Close"].astype(float),           # 實際報價：用嚟話你知價位
+        "volume": adj["Volume"].astype(float),
+    }).dropna(subset=["adj"])
+    df["vix"] = vix.astype(float).reindex(df.index).ffill()
+    return df
+
+
+def add_signals(df):
+    c = df["adj"]
+    d = c.diff()
+    up = d.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
+    dn = (-d.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
+    df["rsi"] = 100 - 100 / (1 + up / dn)
+    df["ma200"] = c.rolling(200).mean()
+    df["vol_mult"] = df["volume"] / df["volume"].rolling(50).mean()
+    df["three"] = (df["rsi"] < RSI_MAX) & (df["vix"] >= VIX_MIN) & (df["vol_mult"] >= VOL_MULT)
+    return df
+
+
+# ---------------- 規則（由頭行一次）----------------
+def replay(df):
+    """回傳每日收市後嘅狀態：out=現金、in=正常持有、early=提早買入中；同提早買入價。"""
+    state, entry_px = "out", np.nan
+    states, entries = [], []
+    for p, m, three in zip(df["adj"].values, df["ma200"].values, df["three"].values):
+        if np.isnan(m):
+            states.append("out")
+            entries.append(np.nan)
+            continue
+        if state == "in":
+            if p < m * (1 - BAND):
+                state = "out"
+        elif state == "out":
+            if p > m * (1 + BAND):
+                state = "in"
+            elif bool(three):
+                state, entry_px = "early", p
+        elif state == "early":
+            if p > m * (1 + BAND):
+                state = "in"
+            elif p < entry_px * (1 - STOP):
+                state = "out"
+        states.append(state)
+        entries.append(entry_px if state == "early" else np.nan)
+    df["state"] = states
+    df["entry_adj"] = entries
+    return df
+
+
+# ---------------- 訊息 ----------------
+NAMES = {"out": "現金（唔持有SPY）", "in": "持有SPY", "early": "持有SPY（恐慌時提早買入）"}
+
+
+def build_message(df, i):
+    row, prev = df.iloc[i], df.iloc[i - 1]
+    date = df.index[i].date()
+    k = row["raw"] / row["adj"]                    # 將已計息價格換返做實際報價
+    sell_line = row["ma200"] * (1 - BAND) * k
+    buy_line = row["ma200"] * (1 + BAND) * k
+    ma_raw = row["ma200"] * k
+    s0, s1 = prev["state"], row["state"]
+    holding0, holding1 = s0 != "out", s1 != "out"
+
+    if not holding0 and holding1:
+        why = ("三合一恐慌信號出現（RSI、VIX、成交量全部達標）" if s1 == "early"
+               else "SPY升返高過200日線2%")
+        action = f"🟢 *買入*：下一個交易日收市前，用全部資金買入SPY\n原因：{why}"
+    elif holding0 and not holding1:
+        why = ("提早買入後跌咗5%，觸發止損" if s0 == "early"
+               else "SPY跌穿200日線2%")
+        action = f"🔴 *賣出*：下一個交易日收市前，賣晒SPY轉做現金\n原因：{why}"
+    elif holding1:
+        action = "⚪ *繼續持有*，唔使做嘢"
+    else:
+        action = "⚪ *繼續揸現金*，唔使做嘢"
+    if s0 == "early" and s1 == "in":
+        action += "\n（提早買入已經成功，由今日起變返正常持有）"
+
+    lines = [
+        f"📊 *SPY每日訊號* {date}",
+        "",
+        action,
+        "",
+        f"目前應該：{NAMES[s1]}",
+        f"SPY收市：${row['raw']:.2f}",
+        f"200日線：${ma_raw:.2f}（SPY {'高' if row['adj'] > row['ma200'] else '低'}過 {abs(row['adj'] / row['ma200'] - 1) * 100:.1f}%）",
+    ]
+    if s1 == "in":
+        lines.append(f"賣出線：收市低過 ${sell_line:.2f} 就賣")
+    elif s1 == "early":
+        stop_raw = row["entry_adj"] * (1 - STOP) * k
+        lines.append(f"止損線：收市低過 ${stop_raw:.2f} 就賣（買入價跌5%）")
+        lines.append(f"變返正常持有：收市高過 ${buy_line:.2f}")
+    else:
+        lines.append(f"買入線：收市高過 ${buy_line:.2f} 就買返")
+        three_txt = (f"RSI {row['rsi']:.0f}（要<30）{'✅' if row['rsi'] < RSI_MAX else '❌'} | "
+                     f"VIX {row['vix']:.1f}（要≥30）{'✅' if row['vix'] >= VIX_MIN else '❌'} | "
+                     f"成交量 {row['vol_mult']:.1f}倍（要≥2）{'✅' if row['vol_mult'] >= VOL_MULT else '❌'}")
+        lines.append(f"三合一提早買入：{three_txt}")
+    if s1 != "out":
+        lines.append(f"參考：RSI {row['rsi']:.0f} | VIX {row['vix']:.1f} | 成交量 {row['vol_mult']:.1f}倍")
+
+    chg = df["state"].ne(df["state"].shift()) & ((df["state"] == "out") != (df["state"].shift() == "out"))
+    last = df.index[:i + 1][chg.iloc[:i + 1].values]
+    if len(last):
+        lines.append(f"上次買賣訊號：{last[-1].date()}")
+    lines += ["", "_按回測規則自動提示，唔係投資建議_"]
+    return "\n".join(lines), s1, sell_line, buy_line
+
+
 def send_telegram(text):
-    if not BOT_TOKEN or not CHAT_ID: return
+    if not BOT_TOKEN or not CHAT_ID:
+        print("（冇Telegram設定，只印出嚟）")
+        return
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text[:4000], "parse_mode": "Markdown"}
     try:
-        response = requests.post(url, json=payload, timeout=10)
-        if response.status_code == 400:
-            payload["parse_mode"] = None
+        r = requests.post(url, json=payload, timeout=10)
+        if r.status_code == 400:
+            payload.pop("parse_mode")
             requests.post(url, json=payload, timeout=10)
-    except: pass
+    except Exception as e:
+        print(f"Telegram 推送失敗: {e}")
 
-def log_to_google_sheet(ticker, strategy_name, vix, analysis_text):
-    if not SHEET_WEBHOOK_URL: return
-    ev, pivot, stop_loss = "N/A", "手動查閱", "手動查閱"
-    ev_match = re.search(r"(?:期望值|EV)[^|\n:]*[:|]?\s*([-+−‑]?\s*\d+\.?\d*)", analysis_text, re.IGNORECASE)
-    if ev_match: ev = ev_match.group(1).replace(" ", "")
-    for line in analysis_text.split("\n"):
-        if pivot == "手動查閱" and re.search(r"(?:Entry|買入價|買入點|試探買入|進場)", line, re.IGNORECASE):
-            prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
-            if prices: pivot = prices[0]
-        if stop_loss == "手動查閱" and re.search(r"(?:Stop[-‑–—]?Loss|硬性止損|止損位|止損點|止損)", line, re.IGNORECASE):
-            prices = re.findall(r"\$\s*(\d+\.?\d*)", line)
-            if prices: stop_loss = prices[0]
+
+def log_to_google_sheet(date, state, vix, close, line):
+    if not SHEET_WEBHOOK_URL:
+        return
+    data = {"date": str(date), "ticker": "SPY", "strategy": f"SPY每日訊號：{NAMES[state]}",
+            "vix": f"{vix:.2f}", "ev": "N/A", "pivot": f"{close:.2f}", "stop_loss": f"{line:.2f}"}
     try:
-        if float(stop_loss) >= float(pivot): stop_loss = f"{stop_loss}(⚠️顛倒)"
-    except: pass
-    data = {"date": datetime.now().strftime("%Y-%m-%d"), "ticker": ticker, "strategy": strategy_name, "vix": f"{vix:.2f}", "ev": ev, "pivot": pivot, "stop_loss": stop_loss}
-    try: requests.post(SHEET_WEBHOOK_URL, json=data, timeout=10)
-    except: pass
+        requests.post(SHEET_WEBHOOK_URL, json=data, timeout=10)
+    except Exception as e:
+        print(f"Google Sheet 紀錄失敗: {e}")
 
-# ==========================================
-# 3. 數據獲取與指標計算
-# ==========================================
-def get_market_context():
-    try:
-        vix = yf.Ticker("^VIX").history(period="1d")["Close"].iloc[-1]
-        spy = yf.download("SPY", period="6mo", progress=False)
-        if isinstance(spy.columns, pd.MultiIndex): spy.columns = spy.columns.get_level_values(0)
-        spy_bullish = spy["Close"].iloc[-1] > spy["Close"].rolling(50).mean().iloc[-1]
-        return float(vix), bool(spy_bullish)
-    except: return 20.0, True
 
-def calculate_extra_indicators(df):
-    """計算 MACD, KDJ, 神奇九轉 (TD Sequential)"""
-    df = df.copy()
-    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = exp1 - exp2
-    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['Hist'] = df['MACD'] - df['Signal']
-    
-    low_min = df['Low'].rolling(window=9).min()
-    high_max = df['High'].rolling(window=9).max()
-    df['RSV'] = 100 * ((df['Close'] - low_min) / (high_max - low_min))
-    df['K'] = df['RSV'].ewm(com=2, adjust=False).mean()
-    df['D'] = df['K'].ewm(com=2, adjust=False).mean()
-    df['J'] = 3 * df['K'] - 2 * df['D']
-    
-    df['TD_Setup'] = 0
-    setup_count = 0
-    for i in range(4, len(df)):
-        if df['Close'].iloc[i] > df['Close'].iloc[i-4]:
-            setup_count += 1
-        else:
-            setup_count = 0
-        df.iloc[i, df.columns.get_loc('TD_Setup')] = setup_count if setup_count <= 9 else 9
-    return df
+def main(df=None):
+    dry = "--dry" in sys.argv
+    if df is None:
+        df = load_data()
+    df = replay(add_signals(df))
 
-def scan_breakout_candidates(spy_bullish):
-    print(f"正在批次下載 {len(WATCHLIST)} 隻 Mega Cap 股票歷史數據...")
-    candidates = []
-    try:
-        # 要用2y：52週高位(High52w)要252個交易日先計到，1y只有約250日，
-        # 會令PctFrom52wHigh永遠係NaN，check_breakout_signal永遠唔觸發。
-        batch = yf.download(WATCHLIST, period="2y", group_by="ticker", threads=True, progress=False)
-    except: return candidates
+    if "--date" in sys.argv:
+        target = pd.Timestamp(sys.argv[sys.argv.index("--date") + 1])
+        i = int(df.index.searchsorted(target, side="right")) - 1
+    else:
+        i = len(df) - 1
+        today_ny = datetime.now(ZoneInfo("America/New_York")).date()
+        if df.index[i].date() != today_ny and not dry:
+            msg = f"📊 SPY每日訊號：今日（{today_ny}）未有新收市數據，可能係美股休市。最後數據日期：{df.index[i].date()}。"
+            print(msg)
+            send_telegram(msg)
+            return
 
-    for t in WATCHLIST:
-        try:
-            if isinstance(batch.columns, pd.MultiIndex):
-                if t not in batch.columns.get_level_values(0): continue
-                df = batch[t].dropna(how="all")
-            else: df = batch
-            if df.empty or len(df) < 210: continue
+    text, state, sell_line, buy_line = build_message(df, i)
+    print(text)
+    if not dry:
+        send_telegram(text)
+        row = df.iloc[i]
+        log_to_google_sheet(df.index[i].date(), state, row["vix"], row["raw"],
+                            sell_line if state != "out" else buy_line)
 
-            df = compute_indicators(df)
-            df = calculate_extra_indicators(df)
-            row = df.iloc[-1]
-            
-            if check_breakout_signal(row, spy_is_bullish=spy_bullish):
-                candidates.append({
-                    "ticker": t,
-                    "close": row["Close"], "sma20": row["SMA20"], "sma50": row["SMA50"], "sma200": row.get("SMA200", None),
-                    "rsi14": row["RSI14"], "ema9": row["EMA9"], "ema21": row["EMA21"], "obv": row["OBV"],
-                    "rel_vol": row["RelVol"], "pct_from_52w_high": row["PctFrom52wHigh"]*100, 
-                    "gap_up": row["GapUp"], "change_from_open_pct": row["ChangeFromOpen"]*100, "daily_ret_pct": row["DailyRet"]*100,
-                    "macd": row["MACD"], "macd_signal": row["Signal"], "macd_hist": row["Hist"],
-                    "kdj_k": row["K"], "kdj_d": row["D"], "kdj_j": row["J"], "td_setup": row["TD_Setup"]
-                })
-        except: continue
-    return candidates
-
-def get_fundamentals(ticker):
-    try:
-        info = yf.Ticker(ticker).info
-        sector = info.get("sector", "無法確認")
-        eps_growth = info.get("earningsQuarterlyGrowth")
-        eps_growth = f"{eps_growth * 100:.1f}%" if isinstance(eps_growth, (int, float)) else "資料不足"
-        return sector, eps_growth
-    except: return "無法確認（抓取失敗）", "資料不足（抓取失敗）"
-
-def get_recent_news(ticker):
-    try:
-        news_list = yf.Ticker(ticker).news[:3]
-        return "\n".join([f"▪ {n.get('title', '')}" for n in news_list]) if news_list else "近期無重大新聞。"
-    except: return "近期無重大新聞。"
-
-def format_quant_snapshot_text(c):
-    lines = [
-        f"- 現價：${c['close']:.2f}",
-        f"- 均線：SMA20={c['sma20']:.2f} / SMA50={c['sma50']:.2f}" + (f" / SMA200={c['sma200']:.2f}" if c.get("sma200") else ""),
-        f"- 動能：EMA9={c['ema9']:.2f} / EMA21={c['ema21']:.2f}",
-        f"- 震盪指標：RSI(14)={c['rsi14']:.1f} | KDJ(K={c['kdj_k']:.1f}, D={c['kdj_d']:.1f}, J={c['kdj_j']:.1f})",
-        f"- 趨勢指標：MACD={c['macd']:.2f}, Signal={c['macd_signal']:.2f}, Hist={c['macd_hist']:.2f}",
-        f"- 神奇九轉 (TD Setup)：連續上漲 {c['td_setup']} 天",
-        f"- 量價：OBV={c['obv']:,.0f} | 相對成交量={c['rel_vol']:.2f}x",
-        f"- 形態：距52週高位={c['pct_from_52w_high']:.1f}% | 今日跳空={'有' if c['gap_up'] else '無'}",
-        f"- 日內表現：單日總漲幅={c['daily_ret_pct']:.2f}% | 開盤至今漲幅={c['change_from_open_pct']:.2f}%",
-    ]
-    return "\n".join(lines)
-
-# ==========================================
-# 4. AI 提示詞 (極致資金效率版)
-# ==========================================
-def load_prompt(candidate, sector, eps_growth, news_text):
-    ticker = candidate["ticker"]
-    date = datetime.now().strftime("%Y-%m-%d")
-    quant_text = format_quant_snapshot_text(candidate)
-
-    return f"""
-角色設定：你是一位擁有 30 年華爾街經驗的頂尖量化專家 (CIO)。
-
-【格式鐵律】：
-1. 禁止使用Markdown表格語法（帶 |---|），改用清單點(-)同粗體標題(###)。
-2. 【誠實原則】：量化數據已經確立，但若基本面或新聞資訊不足以支撐這筆突破，請老實註明「資料不足，風險較高」，絕不可捏造行業背景或未來催化劑。
-3. 【模型背景】：此「爆量缺口突破」策略在歷史回測中具備極高正期望值（Mega Cap 大型股勝率高達 72%）。請參考此強大背景，但必須根據下方實際數據進行獨立評估。
-4. 【輔助指標應用】：請觀察 MACD、KDJ 和 神奇九轉。若出現「TD Setup 達 8 或 9」或「KDJ 極度超買(>80)」等動能衰竭跡象，請在紅隊壓力測試中嚴厲警告。
-
-分析標的：{ticker}（日期：{date} ｜ 分組：Mega Cap 傳統巨無霸）
-
-【實際技術與量化數據】：
-{quant_text}
-
-【基本面與新聞】：
-- 所屬行業：{sector}
-- EPS 季增長：{eps_growth}
-{news_text}
-
----
-### 階段一：終極決策前置
-- 【指令】：(強烈買入 / 輕倉試探 / 防守觀望)
-- 【主觀勝率】：基於實際數據與行業板塊動能獨立判斷（基準為 72%，若欠缺資訊或出現衰竭訊號，請如實降低評分）
-- 【期望值(EV)】：+/- X.XX%
-- 【核心邏輯】：精煉解釋決策原因，基於哪一項數據？
-
-### 階段二：族群與基本面催化劑
-- 簡述目前營運亮點，是否有足夠動力支撐這波突破？(若資訊不足請直接回答「資料不足」)
-
-### 階段三：量化風控參數
-- Entry（買入價）：$XX.XX
-- Stop-Loss（硬性止損）：$XX.XX（嚴格定於買入價 -7%）
-- Target T1（波段止盈）：$XX.XX（嚴格定於買入價 +10%）
-- 資金保護策略：最大持倉 20 日；【時間止損】若持有 10 日未達 +3% 利潤則強制平倉釋放資金；【保本機制】獲利達 +5% 將止損上移至買入價。
-
-### 階段四：紅隊壓力測試
-- 致命陷阱：這筆突破最大的潛在風險、超買跡象 (如 神奇九轉或 KDJ 鈍化) 或基本面盲區是什麼？
-"""
-
-# ==========================================
-# 5. 主程式執行
-# ==========================================
-def main():
-    print("啟動 AI 量化交易員...")
-    if not GROQ_API_KEY: return
-    vix, spy_bullish = get_market_context()
-    if not spy_bullish:
-        msg = "⚠️ **大盤濾網啟動**\n標普500跌破50日均線，目前禁止做多，AI 提早下班。"
-        send_telegram(msg); return
-
-    send_telegram(f"⏳ **AI交易員已上線**\n📊 VIX: `{vix:.2f}`\n正在批次掃描 {len(WATCHLIST)} 隻 Mega Cap 核心股...")
-    candidates = scan_breakout_candidates(spy_bullish)
-
-    if not candidates:
-        msg = f"⚠️ 今日 {len(WATCHLIST)} 隻核心股皆無觸發爆量突破，守住資金賺取 IB01 無風險利息，提早下班。"
-        send_telegram(msg); return
-
-    names = ", ".join(c["ticker"] for c in candidates)
-    send_telegram(f"🎯 **今日精準突破名單: {names}**\n正在呼叫 AI 大腦診斷...")
-    client = Groq(api_key=GROQ_API_KEY)
-
-    for c in candidates:
-        t = c["ticker"]
-        try:
-            sector, eps_growth = get_fundamentals(t)
-            news_data = get_recent_news(t)
-            prompt = load_prompt(c, sector, eps_growth, news_data)
-
-            response = client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-                model="openai/gpt-oss-120b",
-                temperature=0.2,
-            )
-            analysis = response.choices[0].message.content
-            send_telegram(f"🔥 **【{t}｜Mega Cap】機密備忘錄** 🔥\n\n{analysis[:3800]}")
-            log_to_google_sheet(t, "Volume Breakout", vix, analysis)
-            time.sleep(5)
-        except Exception as e: print(f"❌ 分析 {t} 失敗: {e}")
 
 if __name__ == "__main__":
     main()

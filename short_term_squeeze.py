@@ -22,6 +22,11 @@ short_term_squeeze.py — 短炒回測②：Short Squeeze（照用戶Finviz篩�
 測試期：2021-07至2026-09；前半2021-07至2023-12，後半2024-01至2026-09。
 揀法：同short_term_gap.py一樣。
 輸出：short_squeeze_results.csv、short_squeeze_trades.csv.gz
+==== 結果（2026-10，GitHub run 37211090092，記錄低，唔再改）====
+- ⚠️ 數據覆蓋差：7670隻入面只攞到2131隻價格（Yahoo限制，A-C字頭為主）；127個信號（已剔ETF）。
+- 每筆平均：揸1-5日 -0.1%至-0.6%，揸20日 -4.7%至-5.0%（贏SPY -6%）。
+- 組合全部蝕錢（-2.3%至-28.7%/年），同期SPY +11.5%/年。前半揀中「第二日開市買、揸3日」→ 後半 -2.95%。
+- 結論：呢個Short Squeeze篩選之後股價通常跌，唔建議用。
 """
 import io
 import time

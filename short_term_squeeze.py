@@ -5,7 +5,8 @@ short_term_squeeze.py — 短炒回測②：Short Squeeze（照用戶Finviz篩�
 數據：
   - 沽空股數：FINRA每半個月公佈嘅數據（2021-06起先有交易所上市股票）。
     結算日之後9個交易日先當係「已經知道」（FINRA大約7個交易日後公佈，留多兩日）。
-  - 流通股（Float）：冇免費歷史數據，而且Finviz封鎖GitHub主機；改用yfinance嘅「歷史已發行股數」（當時嘅數字），\n    已發行股數 ≥ 流通股，所以「沽空比例」會計細咗，條件其實比Finviz嚴。股數日期後10日先當已知。
+  - 流通股（Float）：冇免費歷史數據，而且Finviz封鎖GitHub主機；改用yfinance嘅「歷史已發行股數」（當時嘅數字），
+    已發行股數 ≥ 流通股，所以「沽空比例」會計細咗，條件其實比Finviz嚴。股數日期後10日先當已知。
   - 機構持股 >50%、機構買賣 >0%：冇免費歷史數據，測試唔到，唔用。
   - 可以買期權（Optionable）：冇歷史數據，唔用。
 信號（每日收市後）：
@@ -17,7 +18,7 @@ short_term_squeeze.py — 短炒回測②：Short Squeeze（照用戶Finviz篩�
   - 當日成交量 > 50萬股（Current Volume Over 500K）
   - 同一隻股票出咗信號之後20個交易日內唔再計（避免重複）
 買入時間、賣出方法、組合、成本：同short_term_gap.py一樣（$10,000，最多3隻，每次0.15%）。
-股票池：FINRA曾經被沽空50萬股以上嘅股票（⚠️已除牌公司冇價格數據，有倖存者偏差）。
+股票池：FINRA曾經被沽空50萬股以上嘅股票（剔走ETF）（⚠️已除牌公司冇價格數據，有倖存者偏差）。
 測試期：2021-07至2026-09；前半2021-07至2023-12，後半2024-01至2026-09。
 揀法：同short_term_gap.py一樣。
 輸出：short_squeeze_results.csv、short_squeeze_trades.csv.gz
@@ -71,7 +72,8 @@ def fetch_finra():
             continue
         try:
             df = pd.read_csv(io.StringIO(txt), sep="|", quotechar='"', dtype=str, on_bad_lines="skip")
-            df = df[["symbolCode", "marketClassCode", "currentShortPositionQuantity", "settlementDate"]]
+            df = df[["symbolCode", "issuerServicesGroupExchangeCode", "marketClassCode",
+                     "currentShortPositionQuantity", "settlementDate"]]
             frames.append(df)
         except Exception as e:
             print(f"FINRA {d:%Y-%m-%d} 讀取失敗：{e}")
@@ -80,6 +82,7 @@ def fetch_finra():
     si["settle"] = pd.to_datetime(si["settlementDate"])
     si = si[~si["marketClassCode"].astype(str).str.upper().str.contains("OTC|BB", na=False)]
     si = si[si["symbolCode"].astype(str).str.fullmatch(r"[A-Z]{1,5}")]
+    si = si[si["issuerServicesGroupExchangeCode"].astype(str).str.upper() != "E"]   # 剔走ETF/ETP（Finviz篩選唔包ETF）
     log(f"FINRA：{si['settle'].nunique()}個結算日，{si['symbolCode'].nunique()}隻股票")
     return si[["symbolCode", "settle", "short"]].rename(columns={"symbolCode": "ticker"})
 
@@ -135,6 +138,8 @@ def main():
     spy = download(["SPY", "QQQ"], "2020-06-01", "2026-10-01")["SPY"]["Close"]
     prices = download(cand, "2020-06-01", "2026-10-01")
     log(f"有價格數據：{len(prices)}/{len(cand)}隻")
+    cov = pd.Series([t[0] for t in prices]).value_counts().sort_index().to_dict()
+    log(f"有價格數據嘅股票按開頭字母：{cov}")
     prices = {t: d for t, d in prices.items() if (d["Close"] > 15).any()
               and (d["Volume"] > 500_000).any()}
     log(f"曾經高過$15而且有過50萬股成交：{len(prices)}隻，開始攞歷史股數")

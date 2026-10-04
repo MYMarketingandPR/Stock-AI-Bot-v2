@@ -43,6 +43,7 @@ jobs:
         if: always()
         run: |
           mkdir -p /tmp/out && cp ${{ inputs.outputs }} /tmp/out/ || true
+          rm -f ${{ inputs.outputs }}
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git fetch origin research-results

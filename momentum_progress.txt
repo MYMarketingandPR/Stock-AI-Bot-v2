@@ -1,0 +1,9 @@
+18:30:31 出錯：Traceback (most recent call last):
+  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/momentum_v1.py", line 301, in <module>
+    main()
+  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/momentum_v1.py", line 205, in main
+    current, ch = sp500_history()
+  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/momentum_v1.py", line 66, in sp500_history
+    date_col = [c for c in ch.columns if "Date" in c][0]
+AttributeError: 'NoneType' object has no attribute 'columns'
+

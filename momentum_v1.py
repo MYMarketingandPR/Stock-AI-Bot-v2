@@ -4,7 +4,8 @@ momentum_v1.py — 月度動量排名（學術做法）：每月買過去12個�
 ⚠️ 預先登記（跑之前定好，跑完唔改）：
 
 股票池（盡量減少倖存者偏差）
-- 每個月用「當時」嘅標普500成分股：由今日名單出發，用Wikipedia「成分股變動」表倒推返去。
+- 每個月用「當時」嘅標普500成分股：首選GitHub公開數據fja05680/sp500（逐日成分股名單）；
+  用唔到先用Wikipedia「成分股變動」表由今日名單倒推。
 - 已經除牌/被收購而yfinance冇數據嘅股票會缺失 —— 每年報告數據覆蓋率；覆蓋率越低，結果越偏樂觀。
 
 排名同持倉
@@ -53,35 +54,57 @@ def norm(t):
 
 
 def sp500_history():
+    """回傳 members(d)：d嗰日嘅標普500成分股。
+    首選：fja05680/sp500（GitHub公開數據，逐日列出當時成分股）；後備：Wikipedia變動表倒推。"""
+    try:
+        api = requests.get("https://api.github.com/repos/fja05680/sp500/contents/", headers=HDR, timeout=30).json()
+        files = sorted(f["name"] for f in api if f["name"].startswith("S&P 500 Historical Components")
+                       and f["name"].endswith(".csv"))
+        name = files[-1]
+        url = "https://raw.githubusercontent.com/fja05680/sp500/master/" + requests.utils.quote(name)
+        df = pd.read_csv(io.StringIO(requests.get(url, headers=HDR, timeout=60).text))
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date")
+        snaps = [(d, set(norm(t) for t in str(x).split(","))) for d, x in zip(df["date"], df["tickers"])]
+        log(f"成分股來源：fja05680/sp500 {name}，{len(snaps)}個日期，{snaps[0][0].date()} 至 {snaps[-1][0].date()}")
+        dates = [d for d, _ in snaps]
+
+        def members(d):
+            i = int(np.searchsorted(np.array(dates, dtype="datetime64[ns]"), np.datetime64(d), side="right")) - 1
+            return snaps[max(i, 0)][1]
+        return members
+    except Exception as e:
+        log(f"fja05680數據用唔到（{e}），改用Wikipedia")
     html = requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", headers=HDR, timeout=30).text
     tables = pd.read_html(io.StringIO(html))
+    for k, t in enumerate(tables):
+        log(f"Wikipedia表{k}欄位：{[str(c) for c in t.columns][:8]}")
     current = set(norm(t) for t in tables[0]["Symbol"].dropna())
     ch = None
     for t in tables[1:]:
         cols = [" ".join(map(str, c)) if isinstance(c, tuple) else str(c) for c in t.columns]
-        if any("Added" in c for c in cols) and any("Removed" in c for c in cols):
+        low = [c.lower() for c in cols]
+        if any("added" in c for c in low) and any("removed" in c for c in low):
             t.columns = cols
             ch = t
             break
-    date_col = [c for c in ch.columns if "Date" in c][0]
-    add_col = [c for c in ch.columns if "Added" in c and "Ticker" in c][0]
-    rem_col = [c for c in ch.columns if "Removed" in c and "Ticker" in c][0]
+    date_col = [c for c in ch.columns if "date" in c.lower()][0]
+    add_col = [c for c in ch.columns if "added" in c.lower() and "ticker" in c.lower()][0]
+    rem_col = [c for c in ch.columns if "removed" in c.lower() and "ticker" in c.lower()][0]
     ch = pd.DataFrame({"date": pd.to_datetime(ch[date_col], errors="coerce"),
                        "added": ch[add_col], "removed": ch[rem_col]}).dropna(subset=["date"])
     ch = ch.sort_values("date", ascending=False)
     log(f"Wikipedia：今日成分股{len(current)}隻；變動紀錄{len(ch)}條，最早 {ch['date'].min().date()}")
-    return current, ch
 
-
-def members_at(current, ch, when):
-    """由今日倒推返去：喺when之後發生嘅變動逐條還原。"""
-    s = set(current)
-    for _, r in ch[ch["date"] > when].iterrows():
-        if isinstance(r["added"], str) and r["added"].strip():
-            s.discard(norm(r["added"]))
-        if isinstance(r["removed"], str) and r["removed"].strip():
-            s.add(norm(r["removed"]))
-    return s
+    def members(d):
+        s = set(current)
+        for _, r in ch[ch["date"] > d].iterrows():
+            if isinstance(r["added"], str) and r["added"].strip():
+                s.discard(norm(r["added"]))
+            if isinstance(r["removed"], str) and r["removed"].strip():
+                s.add(norm(r["removed"]))
+        return s
+    return members
 
 
 # ---------------- 數據 ----------------
@@ -202,9 +225,9 @@ def band_filter(spy, n=200, b=0.02):
 
 def main():
     open(PROGRESS, "w").close()
-    current, ch = sp500_history()
+    members_fn = sp500_history()
     month_ends = pd.date_range("2004-12-31", END, freq="ME")
-    members = {d: members_at(current, ch, d) for d in month_ends}
+    members = {d: members_fn(d) for d in month_ends}
     everyone = sorted(set().union(*members.values()))
     log(f"2005-2026曾經係成分股：{len(everyone)}隻")
     closes = download_close(everyone + ["SPY"], "2003-06-01", "2026-10-01")

@@ -147,7 +147,9 @@ def main():
             "exit_date": idx[i].date(), "entry_price": round(p["entry"], 4), "exit_price": round(px, 4),
             "init_stop": round(p["init_stop"], 4), "ret_pct": pnl / invested * 100, "pnl": pnl,
             "r_mult": (px - p["entry"]) / (p["entry"] - p["init_stop"]),
-            "rs_at_signal": round(p["rs"], 1), "days_held": i - p["entry_i"], "exit_reason": reason,
+            "rs_at_signal": round(p["rs"], 1),
+            "rs_at_exit": round(float(RS[i, j]), 1) if not np.isnan(RS[i, j]) else np.nan,  # 只係記錄，唔影響任何規則
+            "days_held": i - p["entry_i"], "exit_reason": reason,
             "position_pct": p["pos_pct"] * 100,
         })
 
@@ -310,7 +312,7 @@ def main():
     lines += ["", "--- 詳細交易紀錄（已平倉，ret_pct已扣交易成本）---"]
 
     cols_out = ["ticker", "group", "entry_date", "exit_date", "entry_price", "exit_price", "init_stop",
-                "ret_pct", "pnl", "r_mult", "rs_at_signal", "days_held", "position_pct", "exit_reason"]
+                "ret_pct", "pnl", "r_mult", "rs_at_signal", "rs_at_exit", "days_held", "position_pct", "exit_reason"]
     summary = pd.DataFrame({"ticker": lines})
     for c in cols_out[1:]:
         summary[c] = ""

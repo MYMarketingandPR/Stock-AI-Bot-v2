@@ -1,0 +1,35 @@
+name: research_features
+
+# 條件研究（設計預先登記喺research_features.py）。先跑backtest_v2（加咗離場RS），再跑研究。
+on:
+  workflow_dispatch:
+
+jobs:
+  run-research:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 把房間的野拿出黎
+        uses: actions/checkout@v4
+
+      - name: 安裝 Python 大腦
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 安裝小幫手工具
+        run: pip install yfinance pandas numpy
+
+      - name: 跑v2回測（交易紀錄加埋離場RS）
+        run: python -u backtest_v2.py
+
+      - name: 跑條件研究
+        run: python -u research_features.py
+
+      - name: 上傳結果
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-results
+          path: |
+            research_results.csv
+            research_samples.csv.gz
+            v2_results.csv

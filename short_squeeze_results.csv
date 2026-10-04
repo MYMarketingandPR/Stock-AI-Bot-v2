@@ -1,8 +1,16 @@
 ﻿report
 ❌ 程式出錯：
 Traceback (most recent call last):
-"  File ""/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/short_term_squeeze.py"", line 143, in <module>"
+"  File ""/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/short_term_squeeze.py"", line 159, in <module>"
     main()
-"  File ""/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/short_term_squeeze.py"", line 100, in main"
-"    spy = prices.pop(""SPY"")[""Close""]"
-KeyError: 'SPY'
+"  File ""/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/short_term_squeeze.py"", line 147, in main"
+"    L, _ = report(trades, prices, spy, PERIODS, ""=== 短炒回測②：Short Squeeze（規則預先登記，見short_term_squeeze.py）==="", notes)"
+"  File ""/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/short_term_common.py"", line 199, in report"
+"    for (em, ex), g in trades.groupby([""entry"", ""exit""], sort=False):"
+"  File ""/opt/hostedtoolcache/Python/3.10.21/x64/lib/python3.10/site-packages/pandas/core/frame.py"", line 9210, in groupby"
+    return DataFrameGroupBy(
+"  File ""/opt/hostedtoolcache/Python/3.10.21/x64/lib/python3.10/site-packages/pandas/core/groupby/groupby.py"", line 1331, in __init__"
+"    grouper, exclusions, obj = get_grouper("
+"  File ""/opt/hostedtoolcache/Python/3.10.21/x64/lib/python3.10/site-packages/pandas/core/groupby/grouper.py"", line 1043, in get_grouper"
+    raise KeyError(gpr)
+KeyError: 'entry'

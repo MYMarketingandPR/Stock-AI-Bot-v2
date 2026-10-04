@@ -1,1 +1,23 @@
-13:02:17 [記憶體 73MB] 開始下載FINRA
+13:32:12 [記憶體 73MB] 開始下載FINRA
+13:32:51 [記憶體 1124MB] FINRA：127個結算日，19890隻股票
+13:32:51 [記憶體 1124MB] 曾經被沽空50萬股以上：8481隻
+13:42:22 [記憶體 1124MB] 有價格數據：1239/8481隻
+13:42:22 [記憶體 1124MB] 開始下載流通股
+13:51:49 [記憶體 1124MB] 流通股：0/1116隻有數據
+13:51:49 [記憶體 1124MB] 信號數：0
+13:51:49 [記憶體 1124MB] 交易紀錄：0行，開始組合模擬
+13:51:49 [記憶體 1124MB] 出錯：Traceback (most recent call last):
+  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/short_term_squeeze.py", line 159, in <module>
+    main()
+  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/short_term_squeeze.py", line 147, in main
+    L, _ = report(trades, prices, spy, PERIODS, "=== 短炒回測②：Short Squeeze（規則預先登記，見short_term_squeeze.py）===", notes)
+  File "/home/runner/work/Stock-AI-Bot/Stock-AI-Bot/short_term_common.py", line 199, in report
+    for (em, ex), g in trades.groupby(["entry", "exit"], sort=False):
+  File "/opt/hostedtoolcache/Python/3.10.21/x64/lib/python3.10/site-packages/pandas/core/frame.py", line 9210, in groupby
+    return DataFrameGroupBy(
+  File "/opt/hostedtoolcache/Python/3.10.21/x64/lib/python3.10/site-packages/pandas/core/groupby/groupby.py", line 1331, in __init__
+    grouper, exclusions, obj = get_grouper(
+  File "/opt/hostedtoolcache/Python/3.10.21/x64/lib/python3.10/site-packages/pandas/core/groupby/grouper.py", line 1043, in get_grouper
+    raise KeyError(gpr)
+KeyError: 'entry'
+

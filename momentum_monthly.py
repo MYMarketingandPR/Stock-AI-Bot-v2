@@ -188,7 +188,7 @@ def load_state(today):
         if b in h.columns and np.isfinite(h[b].get(start_day, np.nan)):
             s = h[b][h.index >= start_day].ffill()
             bench_navs[b] = CAPITAL * s / s.iloc[0]
-    return {"logs": logs, "h": h, "navs": navs, "start_day": start_day, "bench": bench_navs}
+    return {"logs": logs, "h": h, "navs": navs, "start_day": start_day, "bench": bench_navs, "spy_hold": spy_hold_eff}
 
 
 def summary(nv):
@@ -310,6 +310,25 @@ def monthly_scoreboard(today, dry):
             series["線D"] = (r, dn["turn"].astype(float))
     for b, nv in S["bench"].items():
         series[b] = (nv.pct_change().fillna(0.0), pd.Series(0.0, index=nv.index))
+    # SPY訊號方案（main.py：持有就揸SPY，現金就揸現金）同兩個組合（用模擬交易真實數字，每日固定比例）
+    h, hold = S["h"], S.get("spy_hold", {})
+    if "SPY" in h.columns:
+        sr = h["SPY"].pct_change()
+        sig = pd.Series([float(sr[d]) if hold.get(d, 0.0) > 0 and np.isfinite(sr[d]) else 0.0 for d in h.index], index=h.index)
+        sig = sig[sig.index >= start_day]
+        sig.iloc[0] = 0.0
+        series["SPY訊號"] = (sig, pd.Series(0.0, index=sig.index))
+
+    def combo(weights):
+        df = pd.concat({k: series[k][0] for k in weights}, axis=1, join="inner").fillna(0.0)
+        if len(df) < 2:
+            return None
+        return sum(w * df[k] for k, w in weights.items())
+    for name, wts in (("組合甲", {"SPY訊號": 0.70, "線A": 0.15, "線D": 0.15}), ("組合乙", {"QQQ": 0.85, "線D": 0.15})):
+        if all(k in series for k in wts):
+            r = combo(wts)
+            if r is not None:
+                series[name] = (r, pd.Series(0.0, index=r.index))
     idx = series[next(iter(series))][0].index
     rf = get_rf(idx)
     qqq_r = series["QQQ"][0] if "QQQ" in series else None
@@ -333,6 +352,9 @@ def monthly_scoreboard(today, dry):
     lines = [f"🗓️ *每月成績表* {today}（由 {start_day.date()} 開始，{days} 個交易日）", "",
              "*我哋嘅線*", table(["線A", "線B", "線C", "線D"]), "",
              "*比較對象*", table(["SPY", "QQQ", "QQQM", "MTUM"]), "",
+             "*兩個組合（用模擬交易真實數字計，每日固定比例）*", table(["組合甲", "組合乙", "SPY訊號", "QQQ"]),
+             "組合甲 = 70% SPY訊號 + 15% 線A + 15% 線D（回測守得住科網爆煲：2000-2009 最大跌幅 -31%）",
+             "組合乙 = 85% QQQ + 15% 線D（回測2015年起回報較高，但2000-2009 最大跌幅 -77%）", "",
              "點睇：",
              "• 未夠半年唔計年化回報同Calmar（數字會好誇張）；近3/6/12個月要夠日子先有。",
              "• 升市/跌市捕捉係同QQQ比：例如 120% / 100% = 升市多賺、跌市冇多蝕，好；120% / 150% = 多賺只係因為承受多咗跌。",

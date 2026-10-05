@@ -5,7 +5,11 @@ momentum_monthly.py — 動量模擬交易（三條線 + SPY基準，各自獨�
   線B：100% 原始動量前3隻，每月換（回測驗證期 +22.7%，最大跌幅 -51%；只作研究）
   線C：70% 多週期動量前10隻 + 30% SPY訊號方案，每半個月換
        多週期 = 3個月、6個月、12-1個月三個排名取平均（第九輪C6：驗證期 +16.4%，最大跌幅 -31%）
-  SPY基準、QQQ基準：第一次換倉日買入長揸（第十二輪發現線A歷史上同QQQ差唔多，所以兩個都比）
+  比較對象：SPY、QQQ、QQQM（QQQ平價版）、MTUM（動量ETF）——第一次換倉日買入長揸
+       （第十二輪發現線A歷史上同QQQ差唔多、回報大部分係動量因子，所以要同QQQ同MTUM比）
+  每月成績表：月尾最後一個交易日（或 --scoreboard）出一次：今年至今、開始至今、年化、最大跌幅、波幅、
+       Sharpe、Calmar、回本時間、換手、近3/6/12個月、升市/跌市捕捉（對比QQQ）。
+       存 paper_log/scoreboard_YYYY-MM.tsv + Google Sheet（strategy=動量模擬線X｜月度成績表）
   ⚠️ 模擬期間（至少3-6個月）唔改規則，否則模擬交易就驗證唔到回測。
 
 規則：
@@ -19,7 +23,7 @@ momentum_monthly.py — 動量模擬交易（三條線 + SPY基準，各自獨�
   換倉：strategy=動量模擬線X｜買入/賣出/繼續持有，ev=動量分數，pivot=參考價
   每日：strategy=動量模擬線X｜NAV，ticker=組合，ev=總回報%，pivot=總值，stop_loss=最大跌幅%
         strategy=動量模擬線X｜持倉，ev=今期回報%，pivot=今期買入價，stop_loss=今日價
-用法：python momentum_monthly.py [--force] [--dry]
+用法：python momentum_monthly.py [--force] [--dry] [--tracks=A,C] [--scoreboard] [--scoreboard-only]
 """
 import glob
 import io
@@ -150,16 +154,21 @@ def simulate_nav(logs, h, spy_hold_eff):
     return out
 
 
-def daily_status(today, dry):
+BENCH = {"SPY": "SPY基準（長揸）", "QQQ": "QQQ基準（長揸）", "QQQM": "QQQM基準（長揸，QQQ平價版）",
+         "MTUM": "MTUM基準（長揸，動量ETF）"}
+
+
+def load_state(today):
+    """讀紀錄 + 下載價錢 + 重播每條線。回傳 dict；未有紀錄或今日未收市回傳 None。"""
     import yfinance as yf
     logs = read_logs()
     logs = logs[logs["date"] < str(today)]
     if logs.empty:
         print("未有模擬交易紀錄。")
-        return
+        return None
     first = pd.Timestamp(logs["date"].min())
     allt = sorted(set(logs["ticker"]))
-    h = yf.download(allt + ["SPY", "QQQ"], start=(first - pd.Timedelta(days=7)).strftime("%Y-%m-%d"),
+    h = yf.download(allt + list(BENCH), start=(first - pd.Timedelta(days=7)).strftime("%Y-%m-%d"),
                     end=(pd.Timestamp(today) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
                     auto_adjust=True, progress=False)["Close"]
     if isinstance(h, pd.Series):
@@ -167,28 +176,37 @@ def daily_status(today, dry):
     h = h[h.index > first]
     if h.empty or h.index[-1].date() != today:
         print(f"{today} 未有收市數據，可能休市。")
-        return
+        return None
     df = bot.replay(bot.add_signals(bot.load_data()))
     st = (df["state"] != "out").astype(float).shift(2)
     spy_hold_eff = st.reindex(h.index, method="ffill").fillna(0.0).to_dict()
     navs = simulate_nav(logs, h, spy_hold_eff)
     start_day = min(nv.index[0] for nv in navs.values())
-    spy_nav = CAPITAL * h["SPY"] / h["SPY"].loc[start_day]
-    spy_nav = spy_nav[spy_nav.index >= start_day]
+    bench_navs = {}
+    for b in BENCH:
+        if b in h.columns and np.isfinite(h[b].get(start_day, np.nan)):
+            s = h[b][h.index >= start_day].ffill()
+            bench_navs[b] = CAPITAL * s / s.iloc[0]
+    return {"logs": logs, "h": h, "navs": navs, "start_day": start_day, "bench": bench_navs}
 
-    def summary(nv):
-        mdd = (nv / nv.cummax() - 1).min() * 100
-        day_r = (nv.iloc[-1] / nv.iloc[-2] - 1) * 100 if len(nv) > 1 else 0.0
-        return nv.iloc[-1], (nv.iloc[-1] / CAPITAL - 1) * 100, mdd, day_r
 
+def summary(nv):
+    mdd = (nv / nv.cummax() - 1).min() * 100
+    day_r = (nv.iloc[-1] / nv.iloc[-2] - 1) * 100 if len(nv) > 1 else 0.0
+    return nv.iloc[-1], (nv.iloc[-1] / CAPITAL - 1) * 100, mdd, day_r
+
+
+def daily_status(today, dry):
+    S = load_state(today)
+    if S is None:
+        return
+    logs, h, navs, start_day = S["logs"], S["h"], S["navs"], S["start_day"]
     lines = [f"📊 *動量模擬交易* {today}（由 {start_day.date()} 開始，每條線 ${CAPITAL:,.0f}）", ""]
     for tr, cfg in TRACKS.items():
         if tr not in navs:
             continue
         nv = navs[tr]["nav"]
         v, tot, mdd, dr = summary(nv)
-        yrs = max((nv.index[-1] - nv.index[0]).days / 365.25, 1e-9)
-        turn = navs[tr]["turn"].sum() / yrs if yrs > 0.25 else navs[tr]["turn"].sum()
         lines.append(f"*{cfg['label']}*")
         lines.append(f"總值 ${v:,.0f}（{tot:+.1f}%）｜ 今日 {dr:+.1f}% ｜ 最大跌幅 {mdd:.1f}%")
         sheet_row(today, tr, "組合", "NAV", tot, v, f"{mdd:.1f}%", dry)
@@ -209,17 +227,119 @@ def daily_status(today, dry):
                     sheet_row(today, tr, t, "持倉", r, entry[t], hh[t].iloc[-1], dry)
             lines.append(f"今期（{hh.index[0].date()} 買入）：" + "、".join(parts))
         lines.append("")
-    sv, stot, smdd, sdr = summary(spy_nav)
-    lines.append(f"*SPY基準（長揸）*：總值 ${sv:,.0f}（{stot:+.1f}%）｜ 今日 {sdr:+.1f}% ｜ 最大跌幅 {smdd:.1f}%")
-    sheet_row(today, "SPY", "SPY", "NAV", stot, sv, f"{smdd:.1f}%", dry)
-    if "QQQ" in h.columns and np.isfinite(h["QQQ"].get(start_day, np.nan)):
-        qqq_nav = CAPITAL * h["QQQ"] / h["QQQ"].loc[start_day]
-        qv, qtot, qmdd, qdr = summary(qqq_nav[qqq_nav.index >= start_day])
-        lines.append(f"*QQQ基準（長揸）*：總值 ${qv:,.0f}（{qtot:+.1f}%）｜ 今日 {qdr:+.1f}% ｜ 最大跌幅 {qmdd:.1f}%")
-        sheet_row(today, "QQQ", "QQQ", "NAV", qtot, qv, f"{qmdd:.1f}%", dry)
+    lines.append("*比較對象（第一日買入之後唔郁）*")
+    for b, nv in S["bench"].items():
+        bv, btot, bmdd, bdr = summary(nv)
+        lines.append(f"{BENCH[b]}：${bv:,.0f}（{btot:+.1f}%）｜ 今日 {bdr:+.1f}% ｜ 最大跌幅 {bmdd:.1f}%")
+        sheet_row(today, b, b, "NAV", btot, bv, f"{bmdd:.1f}%", dry)
     lines += ["", "冇止損，換倉日先換股。線A、線C嘅SPY部分跟「SPY每日訊號」。", "_模擬交易，唔係投資建議_"]
     text = "\n".join(lines)
     print(text)
+    if not dry:
+        bot.send_telegram(text)
+
+
+# ---------------- 每月成績表 ----------------
+def _w(s):
+    import unicodedata
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
+
+
+def _pad(s, width, left=False):
+    gap = max(width - _w(s), 0)
+    return s + " " * gap if left else " " * gap + s
+
+
+def _fmt(v, kind):
+    if v is None or (isinstance(v, float) and not np.isfinite(v)):
+        return "—"
+    if kind == "pct":
+        return f"{v:+.1f}%"
+    if kind == "dd":
+        return f"{v:.1f}%"
+    if kind == "num":
+        return f"{v:.2f}"
+    if kind == "cap":
+        return f"{v:.0f}%"
+    return str(v)
+
+
+def get_rf(index):
+    try:
+        import yfinance as yf
+        irx = yf.download("^IRX", start=(index[0] - pd.Timedelta(days=10)).strftime("%Y-%m-%d"),
+                          end=(index[-1] + pd.Timedelta(days=1)).strftime("%Y-%m-%d"), progress=False)["Close"]
+        if isinstance(irx, pd.DataFrame):
+            irx = irx.iloc[:, 0]
+        return irx.reindex(index, method="ffill").fillna(0.0) / 100 / 252
+    except Exception as e:
+        print(f"攞唔到現金利率，Sharpe 當0%利率計：{e}")
+        return pd.Series(0.0, index=index)
+
+
+SCORE_ROWS = [("ytd", "今年至今", "pct"), ("total", "開始至今", "pct"), ("cagr", "年化回報", "pct"),
+              ("mdd", "最大跌幅", "dd"), ("vol", "波幅", "dd"), ("sharpe", "Sharpe", "num"),
+              ("calmar", "Calmar", "num"), ("rec", "回本時間", "txt"), ("turn", "換手(累計)", "dd"),
+              ("r3m", "近3個月", "pct"), ("r6m", "近6個月", "pct"), ("r12m", "近12個月", "pct"),
+              ("up_cap", "升市捕捉", "cap"), ("down_cap", "跌市捕捉", "cap")]
+
+
+def monthly_scoreboard(today, dry):
+    """月尾最後一個交易日出：A/B/C + SPY/QQQ/QQQM/MTUM 成績表（升跌市捕捉對比QQQ）。"""
+    from perf import perf
+    S = load_state(today)
+    if S is None:
+        return
+    navs, start_day = S["navs"], S["start_day"]
+    series = {}
+    for tr in TRACKS:
+        if tr in navs:
+            nv = navs[tr]["nav"]
+            r = nv.pct_change()
+            r.iloc[0] = nv.iloc[0] / CAPITAL - 1
+            t = navs[tr]["turn"].copy()
+            t.iloc[0] = 0.0          # 第一次買入唔計換手
+            series[f"線{tr}"] = (r, t)
+    for b, nv in S["bench"].items():
+        series[b] = (nv.pct_change().fillna(0.0), pd.Series(0.0, index=nv.index))
+    idx = series[next(iter(series))][0].index
+    rf = get_rf(idx)
+    qqq_r = series["QQQ"][0] if "QQQ" in series else None
+    stats = {}
+    for name, (r, t) in series.items():
+        p = perf(r, rf=rf, bench=qqq_r if name != "QQQ" else None, turn=t, asof_year=today.year)
+        if p["days"] < 126:
+            p["cagr"] = p["calmar"] = np.nan        # 未夠半年，年化數字會好誇張，唔顯示
+        p["rec"] = ("冇跌過" if p["mdd"] >= 0 else (f"{p['rec_days']}日" if p["recovered"] else "未回本"))
+        p["turn"] = p.get("turn_total", 0.0)
+        stats[name] = p
+
+    def table(cols):
+        cols = [c for c in cols if c in stats]
+        out = [_pad("", 10, True) + "".join(_pad(c, 8) for c in cols)]
+        for key, lab, kind in SCORE_ROWS:
+            out.append(_pad(lab, 10, True) + "".join(_pad(_fmt(stats[c].get(key), kind), 8) for c in cols))
+        return "```\n" + "\n".join(out) + "\n```"
+
+    days = stats[next(iter(stats))]["days"]
+    lines = [f"🗓️ *每月成績表* {today}（由 {start_day.date()} 開始，{days} 個交易日）", "",
+             "*我哋三條線*", table(["線A", "線B", "線C"]), "",
+             "*比較對象*", table(["SPY", "QQQ", "QQQM", "MTUM"]), "",
+             "點睇：",
+             "• 未夠半年唔計年化回報同Calmar（數字會好誇張）；近3/6/12個月要夠日子先有。",
+             "• 升市/跌市捕捉係同QQQ比：例如 120% / 100% = 升市多賺、跌市冇多蝕，好；120% / 150% = 多賺只係因為承受多咗跌。",
+             "• Calmar = 年化回報 ÷ 最大跌幅，越高越好。回本時間 = 由最低位返到之前高位用咗幾耐。",
+             "• A/B/C規則鎖死唔改。6個月後先用決策表判斷：A明顯贏QQQ同MTUM而跌幅唔差 → 繼續；"
+             "A≈QQQ但跌幅更大 → 直接買QQQ更合理；A輸SPY → 停止。",
+             "_模擬交易，唔係投資建議_"]
+    text = "\n".join(lines)
+    print(text)
+    os.makedirs("paper_log", exist_ok=True)
+    tab = pd.DataFrame({name: {lab: _fmt(p.get(key), kind) for key, lab, kind in SCORE_ROWS} for name, p in stats.items()})
+    tab.to_csv(f"paper_log/scoreboard_{today:%Y-%m}.tsv", sep="\t", encoding="utf-8-sig")
+    for name, p in stats.items():
+        for key, lab, kind in SCORE_ROWS:
+            sheet_row(today, name.replace("線", ""), lab, "月度成績表", _fmt(p.get(key), kind), None, "-", dry)
     if not dry:
         bot.send_telegram(text)
 
@@ -228,13 +348,25 @@ def daily_status(today, dry):
 def main():
     force, dry = "--force" in sys.argv, "--dry" in sys.argv
     today = datetime.now(ZoneInfo("America/New_York")).date()
+    want_board = "--scoreboard" in sys.argv or is_last_trading_day(today)
+    if "--scoreboard-only" in sys.argv:
+        monthly_scoreboard(today, dry)
+        return
     due = list(TRACKS) if force else tracks_due(today)
     only = [a.split("=")[1] for a in sys.argv if a.startswith("--tracks=")]
     if only:
         due = [t for t in due if t in only[0].split(",")]
     if not due:
         daily_status(today, dry)
+        if want_board:
+            monthly_scoreboard(today, dry)
         return
+    rebalance(today, due, force, dry)
+    if want_board:
+        monthly_scoreboard(today, dry)
+
+
+def rebalance(today, due, force, dry):
     tickers, names = current_sp500()
     closes = M.download_close(tickers, (pd.Timestamp(today) - pd.Timedelta(days=500)).strftime("%Y-%m-%d"),
                               (pd.Timestamp(today) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))

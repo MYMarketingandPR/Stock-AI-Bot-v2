@@ -2,7 +2,7 @@ name: Monthly Momentum (paper trading)
 
 on:
   schedule:
-    # 星期一至五 UTC 21:45（美股收市後）；程式自己判斷係咪月尾最後一個交易日
+    # 星期一至五 UTC 21:45（美股收市後）；程式自己判斷係咪換倉日 / 月尾（月尾仲會出每月成績表）
     - cron: '45 21 * * 1-5'
   workflow_dispatch:
     inputs:
@@ -14,6 +14,10 @@ on:
         description: "只換邊幾條線（例如 C 或 A,B）；留空 = 全部"
         required: false
         default: ""
+      scoreboard:
+        description: "出每月成績表（yes = 換倉/每日報告之後再出；only = 只出成績表）"
+        required: false
+        default: "no"
 
 permissions:
   contents: write
@@ -47,6 +51,8 @@ jobs:
           ARGS=""
           if [ "${{ inputs.force }}" = "yes" ]; then ARGS="--force"; fi
           if [ -n "${{ inputs.tracks }}" ]; then ARGS="$ARGS --tracks=${{ inputs.tracks }}"; fi
+          if [ "${{ inputs.scoreboard }}" = "yes" ]; then ARGS="$ARGS --scoreboard"; fi
+          if [ "${{ inputs.scoreboard }}" = "only" ]; then ARGS="$ARGS --scoreboard-only"; fi
           python -u momentum_monthly.py $ARGS
 
       - name: 將紀錄放去 paper-trading 分支

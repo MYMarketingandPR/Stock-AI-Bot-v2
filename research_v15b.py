@@ -42,6 +42,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+import data_cache as DC
 import momentum_v1 as M
 from perf import perf
 from research_v10 import metrics, score_pick
@@ -76,7 +77,7 @@ def download(tickers, start, end):
     for n, t in enumerate(tickers):
         for attempt in range(3):
             try:
-                h = yf.Ticker(t).history(start=start, end=end, auto_adjust=True)
+                h = DC.history(t, start, end)
                 if h is not None and len(h) > 260:
                     idx = pd.DatetimeIndex(h.index).tz_localize(None).normalize()
                     c = pd.Series(h["Close"].astype("float32").values, index=idx)

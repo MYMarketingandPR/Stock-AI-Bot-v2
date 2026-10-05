@@ -71,6 +71,7 @@ import time
 import numpy as np
 import pandas as pd
 
+import data_cache as DC
 import momentum_v1 as M
 from perf import perf
 from research_v6 import effective_weights, LOOK, SKIP
@@ -103,8 +104,7 @@ def fetch(tickers, what):
     for n, t in enumerate(tickers):
         for attempt in range(3):
             try:
-                tk = yf.Ticker(t)
-                df = tk.get_earnings_dates(limit=100) if what == "earn" else tk.upgrades_downgrades
+                df = DC.earnings(t) if what == "earn" else DC.upgrades(t)
                 if df is not None and len(df):
                     out[t] = df
                 break

@@ -5,6 +5,7 @@ momentum_monthly.py — 動量模擬交易（三條線 + SPY基準，各自獨�
   線B：100% 原始動量前3隻，每月換（回測驗證期 +22.7%，最大跌幅 -51%；只作研究）
   線C：70% 多週期動量前10隻 + 30% SPY訊號方案，每半個月換
        多週期 = 3個月、6個月、12-1個月三個排名取平均（第九輪C6：驗證期 +16.4%，最大跌幅 -31%）
+  線D：倍升股 + 由高位跌20%賣（line_d.py，每日獨立跑同發訊息；月尾成績表會一齊列出）
   比較對象：SPY、QQQ、QQQM（QQQ平價版）、MTUM（動量ETF）——第一次換倉日買入長揸
        （第十二輪發現線A歷史上同QQQ差唔多、回報大部分係動量因子，所以要同QQQ同MTUM比）
   每月成績表：月尾最後一個交易日（或 --scoreboard）出一次：今年至今、開始至今、年化、最大跌幅、波幅、
@@ -300,6 +301,13 @@ def monthly_scoreboard(today, dry):
             t = navs[tr]["turn"].copy()
             t.iloc[0] = 0.0          # 第一次買入唔計換手
             series[f"線{tr}"] = (r, t)
+    if os.path.exists("paper_log/lineD_nav.tsv"):           # 線D（line_d.py，每日自己記總值）
+        dn = pd.read_csv("paper_log/lineD_nav.tsv", sep="\t", parse_dates=["date"]).drop_duplicates("date", keep="last")
+        dn = dn[dn["date"] <= pd.Timestamp(today)].set_index("date")
+        if len(dn) >= 2:
+            r = dn["nav"].pct_change()
+            r.iloc[0] = dn["nav"].iloc[0] / CAPITAL - 1
+            series["線D"] = (r, dn["turn"].astype(float))
     for b, nv in S["bench"].items():
         series[b] = (nv.pct_change().fillna(0.0), pd.Series(0.0, index=nv.index))
     idx = series[next(iter(series))][0].index
@@ -323,7 +331,7 @@ def monthly_scoreboard(today, dry):
 
     days = stats[next(iter(stats))]["days"]
     lines = [f"🗓️ *每月成績表* {today}（由 {start_day.date()} 開始，{days} 個交易日）", "",
-             "*我哋三條線*", table(["線A", "線B", "線C"]), "",
+             "*我哋嘅線*", table(["線A", "線B", "線C", "線D"]), "",
              "*比較對象*", table(["SPY", "QQQ", "QQQM", "MTUM"]), "",
              "點睇：",
              "• 未夠半年唔計年化回報同Calmar（數字會好誇張）；近3/6/12個月要夠日子先有。",

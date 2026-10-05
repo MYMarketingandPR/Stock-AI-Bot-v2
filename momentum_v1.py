@@ -37,6 +37,8 @@ import time
 
 import numpy as np
 import pandas as pd
+
+import data_cache as DC
 import requests
 
 START, SPLIT, END = "2005-01-01", "2015-12-31", "2026-09-30"
@@ -136,7 +138,7 @@ def download_close(tickers, start, end):
     for n, t in enumerate(tickers):
         for attempt in range(3):
             try:
-                h = yf.Ticker(t).history(start=start, end=end, auto_adjust=True)
+                h = DC.history(t, start, end)
                 if h is not None and len(h) > 20:
                     s = h["Close"].astype(float)
                     s.index = pd.DatetimeIndex(s.index).tz_localize(None).normalize()

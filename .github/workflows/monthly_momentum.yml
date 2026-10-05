@@ -55,6 +55,15 @@ jobs:
           if [ "${{ inputs.scoreboard }}" = "only" ]; then ARGS="$ARGS --scoreboard-only"; fi
           python -u momentum_monthly.py $ARGS
 
+      - name: 線D（倍升股 + 由高位跌20%賣）
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}
+          PAPER_CAPITAL: "80000"
+        run: python -u line_d.py
+
       - name: 月尾記低分析師EPS預測（自己儲歷史數據，第十四輪）
         continue-on-error: true
         run: python -u snapshot_estimates.py

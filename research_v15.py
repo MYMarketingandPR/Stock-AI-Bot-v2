@@ -56,6 +56,7 @@ import time
 import numpy as np
 import pandas as pd
 
+import data_cache as DC
 import momentum_v1 as M
 from perf import perf
 from research_v10 import metrics, score_pick
@@ -73,7 +74,7 @@ def fetch_earn(tickers):
     for n, t in enumerate(tickers):
         for attempt in range(3):
             try:
-                df = yf.Ticker(t).get_earnings_dates(limit=100)
+                df = DC.earnings(t)
                 if df is not None and len(df):
                     out[t] = df
                 break

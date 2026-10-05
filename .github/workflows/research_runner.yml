@@ -29,7 +29,16 @@ jobs:
       - name: 安裝小幫手工具
         run: pip install yfinance pandas numpy lxml requests finvizfinance
 
+      - name: 攞返之前下載過嘅資料（快取）
+        uses: actions/cache@v4
+        with:
+          path: data_cache
+          key: datacache-${{ github.run_id }}
+          restore-keys: datacache-
+
       - name: 跑研究
+        env:
+          DATA_CACHE: data_cache
         run: python -u "${{ inputs.script }}"
 
       - name: 上傳結果

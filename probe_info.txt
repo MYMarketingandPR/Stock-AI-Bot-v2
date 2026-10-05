@@ -1,0 +1,74 @@
+
+===== A. 盈利公布紀錄 =====
+AAPL: 100 次，最早 2002-04-17 16:00:00-04:00，最遲 2026-10-29 16:00:00-04:00，欄位 ['EPS Estimate', 'Reported EPS', 'Surprise(%)']，有預期EPS 88 次
+MSFT: 100 次，最早 2002-01-17 16:00:00-05:00，最遲 2026-10-28 16:00:00-04:00，欄位 ['EPS Estimate', 'Reported EPS', 'Surprise(%)']，有預期EPS 100 次
+JPM: 100 次，最早 2002-01-16 07:00:00-05:00，最遲 2026-10-13 08:00:00-04:00，欄位 ['EPS Estimate', 'Reported EPS', 'Surprise(%)']，有預期EPS 100 次
+XOM: 100 次，最早 2002-01-23 08:00:00-05:00，最遲 2026-10-30 08:00:00-04:00，欄位 ['EPS Estimate', 'Reported EPS', 'Surprise(%)']，有預期EPS 100 次
+NVDA: 100 次，最早 2002-05-22 16:00:00-04:00，最遲 2026-11-17 15:00:00-05:00，欄位 ['EPS Estimate', 'Reported EPS', 'Surprise(%)']，有預期EPS 67 次
+GE: 100 次，最早 2002-04-11 08:00:00-04:00，最遲 2026-10-20 08:00:00-04:00，欄位 ['EPS Estimate', 'Reported EPS', 'Surprise(%)']，有預期EPS 100 次
+INTC: 100 次，最早 2002-04-16 16:00:00-04:00，最遲 2026-10-22 16:00:00-04:00，欄位 ['EPS Estimate', 'Reported EPS', 'Surprise(%)']，有預期EPS 99 次
+XLNX: 冇數據
+TWTR: 冇數據
+ATVI: 冇數據
+                           EPS Estimate  Reported EPS  Surprise(%)
+Earnings Date                                                     
+2003-01-15 16:00:00-05:00           NaN           NaN         1.89
+2002-10-16 16:00:00-04:00           NaN           NaN       -18.18
+2002-07-16 16:00:00-04:00           NaN           NaN        13.43
+2002-07-16 16:00:00-04:00           NaN           NaN         2.55
+2002-04-17 16:00:00-04:00           NaN           NaN      1088.89
+
+===== B. 分析師評級升降 =====
+AAPL: 971 條，最早 2012-09-12 11:51:00，最遲 2026-10-01 15:55:51，欄位 ['Firm', 'ToGrade', 'FromGrade', 'Action', 'priceTargetAction', 'currentPriceTarget', 'priorPriceTarget']
+JPM: 444 條，最早 2012-02-29 12:34:00，最遲 2026-09-28 13:56:12，欄位 ['Firm', 'ToGrade', 'FromGrade', 'Action', 'priceTargetAction', 'currentPriceTarget', 'priorPriceTarget']
+XOM: 414 條，最早 2012-03-22 10:10:00，最遲 2026-10-01 12:27:07，欄位 ['Firm', 'ToGrade', 'FromGrade', 'Action', 'priceTargetAction', 'currentPriceTarget', 'priorPriceTarget']
+INTC: 753 條，最早 2012-04-18 10:30:00，最遲 2026-09-24 13:14:59，欄位 ['Firm', 'ToGrade', 'FromGrade', 'Action', 'priceTargetAction', 'currentPriceTarget', 'priorPriceTarget']
+                               Firm     ToGrade   FromGrade Action priceTargetAction  currentPriceTarget  priorPriceTarget
+GradeDate                                                                                                                 
+2012-09-12 11:51:00   Hudson Square         Buy               main            Raises               900.0             700.0
+2018-12-07 12:24:56  Morgan Stanley  Overweight  Overweight   main            Lowers               236.0             253.0
+2018-12-10 15:35:38       Citigroup         Buy         Buy   main            Lowers               200.0             240.0
+2018-12-14 11:37:29     DA Davidson         Buy         Buy   reit            Lowers               280.0             290.0
+2019-01-03 12:07:27       Citigroup         Buy         Buy   main            Lowers               170.0             200.0
+
+===== C. 分析師EPS預測變化 =====
+eps_trend:
+        current  7daysAgo  30daysAgo  60daysAgo  90daysAgo currency
+period                                                             
+0q      1.97865   1.97754    1.97656    1.97898    2.00836      USD
++1q     2.90586   2.90313    2.89268    2.90908    2.94829      USD
+0y      8.82022   8.81945    8.81248    8.81411    8.75958      USD
++1y     9.57579   9.58154    9.53058    9.58609    9.68258      USD
+eps_revisions:
+        upLast7days  upLast30days  downLast30days  downLast7Days currency
+period                                                                   
+0q                1             7              14              0      USD
++1q               0             1               2              1      USD
+0y                0             3               2              1      USD
++1y               3             5               4              0      USD
+earnings_estimate:
+            avg   low   high  yearAgoEps  numberOfAnalysts  growth currency
+period                                                                     
+0q      1.97865  1.93   2.07     1.85000                27  0.0695      USD
++1q     2.90586  2.56   3.42     2.84000                22  0.0232      USD
+0y      8.82022  8.28   8.94     7.46000                39  0.1823      USD
++1y     9.57579  8.69  10.67     8.82022                40  0.0857      USD
+
+===== D. SEC 財務數據 =====
+403 https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json（讀到 0 bytes）
+403 https://data.sec.gov/api/xbrl/frames/us-gaap/NetIncomeLoss/USD/CY2015.json（讀到 0 bytes）
+403 https://www.sec.gov/files/dera/data/financial-statement-data-sets/2015q1.zip（讀到 0 bytes）
+
+===== E. iShares 羅素ETF歷史持股 =====
+IWB 20260930: 200，冇持股表（長度 1460803）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'
+IWB 20200131: 200，冇持股表（長度 1460803）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'
+IWB 20150130: 200，冇持股表（長度 1460803）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'
+IWB 20100129: 200，冇持股表（長度 1460803）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'
+IWB 20060131: 200，冇持股表（長度 1460803）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'
+IWB 20010131: 200，冇持股表（長度 1460803）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'
+IWV 20260930: 200，冇持股表（長度 1459221）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'
+IWV 20200131: 200，冇持股表（長度 1459221）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'
+IWV 20150130: 200，冇持股表（長度 1459221）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'
+IWV 20100129: 200，冇持股表（長度 1459221）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'
+IWV 20060131: 200，冇持股表（長度 1459221）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'
+IWV 20010131: 200，冇持股表（長度 1459221）頭：'<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" prefix="og: http://ogp.me/ns#" lang="en-US" xml:lang="en-US">\n<head>\n<link rel="preload" hr'

@@ -7,9 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: "唔理係咪月尾，即刻計一次（yes/no）"
+        description: "唔理係咪換倉日，即刻換倉（yes/no）"
         required: false
         default: "no"
+      tracks:
+        description: "只換邊幾條線（例如 C 或 A,B）；留空 = 全部"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -40,7 +44,10 @@ jobs:
           SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}
           PAPER_CAPITAL: "10000"
         run: |
-          if [ "${{ inputs.force }}" = "yes" ]; then python -u momentum_monthly.py --force; else python -u momentum_monthly.py; fi
+          ARGS=""
+          if [ "${{ inputs.force }}" = "yes" ]; then ARGS="--force"; fi
+          if [ -n "${{ inputs.tracks }}" ]; then ARGS="$ARGS --tracks=${{ inputs.tracks }}"; fi
+          python -u momentum_monthly.py $ARGS
 
       - name: 將紀錄放去 paper-trading 分支
         run: |

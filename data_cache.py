@@ -56,7 +56,12 @@ def history(t, start, end):
         idx = pd.DatetimeIndex(h.index).tz_localize(None) if getattr(h.index, "tz", None) else pd.DatetimeIndex(h.index)
         keep = (idx >= pd.Timestamp(start)) & (idx < pd.Timestamp(end))
         return h[keep]
-    h = yf.Ticker(t).history(start=start, end=end, auto_adjust=True)
+    try:
+        h = yf.Ticker(t).history(start=start, end=end, auto_adjust=True)
+    except Exception as e:
+        if not any(w in str(e).lower() for w in TRANSIENT):
+            _save("px", t, {"start": start, "end": end, "data": None})     # 已除牌等：記低，下次唔再試
+        raise
     if h is not None:
         cols = [x for x in ("Close", "Volume") if x in h.columns]
         _save("px", t, {"start": start, "end": end, "data": h[cols] if cols else h})

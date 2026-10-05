@@ -5,7 +5,7 @@ momentum_monthly.py — 動量模擬交易（三條線 + SPY基準，各自獨�
   線B：100% 原始動量前3隻，每月換（回測驗證期 +22.7%，最大跌幅 -51%；只作研究）
   線C：70% 多週期動量前10隻 + 30% SPY訊號方案，每半個月換
        多週期 = 3個月、6個月、12-1個月三個排名取平均（第九輪C6：驗證期 +16.4%，最大跌幅 -31%）
-  SPY基準：第一次換倉日買入SPY長揸
+  SPY基準、QQQ基準：第一次換倉日買入長揸（第十二輪發現線A歷史上同QQQ差唔多，所以兩個都比）
   ⚠️ 模擬期間（至少3-6個月）唔改規則，否則模擬交易就驗證唔到回測。
 
 規則：
@@ -159,7 +159,7 @@ def daily_status(today, dry):
         return
     first = pd.Timestamp(logs["date"].min())
     allt = sorted(set(logs["ticker"]))
-    h = yf.download(allt + ["SPY"], start=(first - pd.Timedelta(days=7)).strftime("%Y-%m-%d"),
+    h = yf.download(allt + ["SPY", "QQQ"], start=(first - pd.Timedelta(days=7)).strftime("%Y-%m-%d"),
                     end=(pd.Timestamp(today) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
                     auto_adjust=True, progress=False)["Close"]
     if isinstance(h, pd.Series):
@@ -212,6 +212,11 @@ def daily_status(today, dry):
     sv, stot, smdd, sdr = summary(spy_nav)
     lines.append(f"*SPY基準（長揸）*：總值 ${sv:,.0f}（{stot:+.1f}%）｜ 今日 {sdr:+.1f}% ｜ 最大跌幅 {smdd:.1f}%")
     sheet_row(today, "SPY", "SPY", "NAV", stot, sv, f"{smdd:.1f}%", dry)
+    if "QQQ" in h.columns and np.isfinite(h["QQQ"].get(start_day, np.nan)):
+        qqq_nav = CAPITAL * h["QQQ"] / h["QQQ"].loc[start_day]
+        qv, qtot, qmdd, qdr = summary(qqq_nav[qqq_nav.index >= start_day])
+        lines.append(f"*QQQ基準（長揸）*：總值 ${qv:,.0f}（{qtot:+.1f}%）｜ 今日 {qdr:+.1f}% ｜ 最大跌幅 {qmdd:.1f}%")
+        sheet_row(today, "QQQ", "QQQ", "NAV", qtot, qv, f"{qmdd:.1f}%", dry)
     lines += ["", "冇止損，換倉日先換股。線A、線C嘅SPY部分跟「SPY每日訊號」。", "_模擬交易，唔係投資建議_"]
     text = "\n".join(lines)
     print(text)

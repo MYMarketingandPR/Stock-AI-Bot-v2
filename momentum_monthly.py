@@ -11,8 +11,8 @@ momentum_monthly.py — 每月模擬交易提示（兩條線）
 - 回測（2018-2026驗證期）：每年 +18.6%，最大跌幅 -34.7%。⚠️ 呢個組合係睇過之前結果先提出，
   所以要靠模擬交易確認，唔好當保證。
 
-運作：GitHub Actions 每個交易日收市後跑。月尾最後一個交易日：發換倉名單（或者用 --force）；
-其他交易日：發模擬持倉由買入至今嘅表現。
+運作：GitHub Actions 每個交易日收市後跑。換倉日（線A：每月15號或之前最後一個平日 + 月尾；線B：月尾）
+發換倉名單（或者用 --force 兩條線一齊換）；其他交易日：發模擬持倉由買入至今嘅表現。
 每次結果記錄落 paper_log/YYYY-MM-DD.csv（workflow會放上 paper-trading 分支），同時寫入Google Sheet
 （用main.py同一個webhook：strategy=動量模擬｜動作、ev=回報%或動量%、pivot=買入/參考價、stop_loss=今日價）。
 用法：python momentum_monthly.py [--force] [--dry]
@@ -33,8 +33,8 @@ import momentum_v1 as M
 M.PROGRESS = "/tmp/momentum_monthly_progress.txt"
 CAPITAL = float(os.environ.get("PAPER_CAPITAL", "10000"))
 LOOK, SKIP = 252, 21
-TRACKS = {"A": {"label": "線A：前10隻70% + SPY訊號30%", "topn": 10, "mom_share": 0.70},
-          "B": {"label": "線B：前3隻100%", "topn": 3, "mom_share": 1.00}}
+TRACKS = {"A": {"label": "線A：前10隻70% + SPY訊號30%（每半個月換）", "topn": 10, "mom_share": 0.70, "freq": "半月"},
+          "B": {"label": "線B：前3隻100%（每月換）", "topn": 3, "mom_share": 1.00, "freq": "月"}}
 SHEET_WEBHOOK_URL = os.environ.get("SHEET_WEBHOOK_URL")
 
 
@@ -67,64 +67,86 @@ def is_last_trading_day(day):
     return nxt.month != day.month
 
 
+def next_weekday(day):
+    nxt = day + timedelta(days=1)
+    while nxt.weekday() >= 5:
+        nxt += timedelta(days=1)
+    return nxt
+
+
+def is_mid_month_day(day):
+    """每月15號或之前最後一個平日（research_v8「每半個月」嘅中段換倉日）。"""
+    return day.weekday() < 5 and day.day <= 15 and next_weekday(day).day > 15
+
+
+def tracks_due(day):
+    due = []
+    for tr, cfg in TRACKS.items():
+        if is_last_trading_day(day) or (cfg["freq"] == "半月" and is_mid_month_day(day)):
+            due.append(tr)
+    return due
+
+
+def latest_log(track, before):
+    """搵某條線喺before之前最新一次換倉紀錄。"""
+    import glob
+    for f in sorted(glob.glob("paper_log/*.csv"), reverse=True):
+        lg = pd.read_csv(f)
+        if "track" not in lg.columns:
+            lg["track"] = "A"
+        if lg["date"].iloc[0] < str(before) and (lg["track"] == track).any():
+            return lg[lg["track"] == track]
+    return None
+
+
 def rank_at(px, i):
     R = px.iloc[i - SKIP] / px.iloc[i - LOOK] - 1
     return R.dropna().sort_values(ascending=False)
 
 
 def daily_status(today, dry):
-    """平日：報告兩條線由買入至今嘅表現。"""
-    import glob
+    """平日：報告每條線由最近一次換倉至今嘅表現；如果今日係某條線嘅換倉生效日就提一提。"""
     import yfinance as yf
-    logs = sorted(glob.glob("paper_log/*.csv"))
-    logs = [f for f in logs if pd.read_csv(f)["date"].iloc[0] < str(today)]
+    logs = {tr: latest_log(tr, today) for tr in TRACKS}
+    logs = {tr: lg for tr, lg in logs.items() if lg is not None}
     if not logs:
-        print("未有模擬交易紀錄（要等第一次月尾換倉）。")
+        print("未有模擬交易紀錄。")
         return
-    lg = pd.read_csv(logs[-1])
-    if "track" not in lg.columns:
-        lg["track"] = "A"
-    sig_day = pd.Timestamp(lg["date"].iloc[0])
-    allt = sorted(set(lg["ticker"]))
-    h = yf.download(allt + ["SPY"], start=(sig_day - pd.Timedelta(days=7)).strftime("%Y-%m-%d"),
+    first = min(pd.Timestamp(lg["date"].iloc[0]) for lg in logs.values())
+    allt = sorted(set().union(*[set(lg["ticker"]) for lg in logs.values()]))
+    h = yf.download(allt + ["SPY"], start=(first - pd.Timedelta(days=7)).strftime("%Y-%m-%d"),
                     end=(pd.Timestamp(today) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
                     auto_adjust=True, progress=False)["Close"]
-    h = h[h.index > sig_day]
-    if h.empty:
-        return
-    if h.index[-1].date() != today:
+    if h.empty or h.index[-1].date() != today:
         print(f"{today} 未有收市數據，可能休市。")
         return
-    if len(h) == 1:
-        lines = [f"📅 *每月動量（模擬交易）* {today}", "", "今日係換倉日（應該喺今日收市前買入），模擬成績由今日收市價開始計：", ""]
-        for tr, cfg in TRACKS.items():
-            top = list(lg.loc[lg["track"] == tr, "ticker"])
-            if top:
-                per = CAPITAL * cfg["mom_share"] / len(top)
-                lines.append(f"{cfg['label']}：每隻大約 ${per:,.0f} → " + "、".join(top))
-        lines.append("_模擬交易，唔係投資建議_")
-    else:
-        entry = h.iloc[0]
-        spy_r = h["SPY"].iloc[-1] / entry["SPY"] - 1
-        lines = [f"📊 *動量模擬持倉* {today}（{h.index[0].date()} 收市買入）", ""]
-        for tr, cfg in TRACKS.items():
-            top = list(lg.loc[lg["track"] == tr, "ticker"])
-            if not top:
-                continue
-            per = CAPITAL * cfg["mom_share"] / len(top)
-            total, parts = 0.0, []
-            for t in top:
-                r = h[t].iloc[-1] / entry[t] - 1 if np.isfinite(entry.get(t, np.nan)) else 0.0
-                total += per * (1 + r)
-                parts.append(f"{t} {r * 100:+.1f}%")
-                if np.isfinite(entry.get(t, np.nan)):
-                    sheet_row(today, tr, t, "持倉", r * 100, entry[t], h[t].iloc[-1], dry)
-            base = per * len(top)
-            lines += [f"*{cfg['label']}*", "、".join(parts),
-                      f"股票部分：${total:,.0f}（{(total / base - 1) * 100:+.1f}%）", ""]
-            sheet_row(today, tr, "組合", f"股票部分總值 ${total:,.0f}", (total / base - 1) * 100, None, None, dry)
-        lines += [f"同期SPY {spy_r * 100:+.1f}%", "今日唔使做嘢，月尾先換股。線A嘅SPY部分睇「SPY每日訊號」。",
-                  "_模擬交易，唔係投資建議_"]
+    lines = [f"📊 *動量模擬持倉* {today}", ""]
+    for tr, cfg in TRACKS.items():
+        if tr not in logs:
+            continue
+        lg = logs[tr]
+        sig_day = pd.Timestamp(lg["date"].iloc[0])
+        hh = h[h.index > sig_day]
+        top = list(lg["ticker"])
+        per = CAPITAL * cfg["mom_share"] / len(top)
+        if len(hh) == 1:
+            lines += [f"*{cfg['label']}*", f"今日係換倉日（應該喺今日收市前買入，每隻大約 ${per:,.0f}）：" + "、".join(top),
+                      "模擬成績由今日收市價開始計。", ""]
+            continue
+        entry = hh.iloc[0]
+        total, parts = 0.0, []
+        for t in top:
+            r = hh[t].iloc[-1] / entry[t] - 1 if np.isfinite(entry.get(t, np.nan)) else 0.0
+            total += per * (1 + r)
+            parts.append(f"{t} {r * 100:+.1f}%")
+            if np.isfinite(entry.get(t, np.nan)):
+                sheet_row(today, tr, t, "持倉", r * 100, entry[t], hh[t].iloc[-1], dry)
+        base = per * len(top)
+        spy_r = hh["SPY"].iloc[-1] / entry["SPY"] - 1
+        lines += [f"*{cfg['label']}*（{hh.index[0].date()} 收市買入）", "、".join(parts),
+                  f"股票部分：${total:,.0f}（{(total / base - 1) * 100:+.1f}%）｜ 同期SPY {spy_r * 100:+.1f}%", ""]
+        sheet_row(today, tr, "組合", f"股票部分總值 ${total:,.0f}", (total / base - 1) * 100, None, None, dry)
+    lines += ["線A嘅SPY部分睇「SPY每日訊號」。", "_模擬交易，唔係投資建議_"]
     text = "\n".join(lines)
     print(text)
     if not dry:
@@ -134,7 +156,8 @@ def daily_status(today, dry):
 def main():
     force, dry = "--force" in sys.argv, "--dry" in sys.argv
     today = datetime.now(ZoneInfo("America/New_York")).date()
-    if not force and not is_last_trading_day(today):
+    due = list(TRACKS) if force else tracks_due(today)
+    if not due:
         daily_status(today, dry)
         return
     tickers, names = current_sp500()
@@ -151,16 +174,18 @@ def main():
         return
     i = len(px) - 1
     now = rank_at(px, i)
-    prev_i = px.index.searchsorted(px.index[i].replace(day=1), side="left") - 1
-    prev = rank_at(px, prev_i) if prev_i > LOOK else pd.Series(dtype=float)
     df = bot.replay(bot.add_signals(bot.load_data()))
     spy_hold = df["state"].iloc[-1] != "out"
 
-    lines = [f"📅 *每月動量（模擬交易）* {last_day}", f"每條線模擬本金 ${CAPITAL:,.0f}", ""]
+    lines = [f"📅 *動量換倉（模擬交易）* {last_day}", f"每條線模擬本金 ${CAPITAL:,.0f}", ""]
     rows = []
     for tr, cfg in TRACKS.items():
+        if tr not in due:
+            continue
         n = cfg["topn"]
-        top, prev_top = list(now.index[:n]), list(prev.index[:n])
+        prev_lg = latest_log(tr, last_day)
+        top = list(now.index[:n])
+        prev_top = list(prev_lg["ticker"]) if prev_lg is not None else []
         add = [t for t in top if t not in prev_top]
         drop = [t for t in prev_top if t not in top]
         per = CAPITAL * cfg["mom_share"] / n
@@ -189,7 +214,15 @@ def main():
     text = "\n".join(lines)
     print(text)
     os.makedirs("paper_log", exist_ok=True)
-    pd.DataFrame(rows).to_csv(f"paper_log/{last_day}.csv", index=False)
+    out = pd.DataFrame(rows)
+    path = f"paper_log/{last_day}.csv"
+    if os.path.exists(path):          # 同一日重跑：保留冇換倉嗰條線嘅紀錄
+        old = pd.read_csv(path)
+        if "track" not in old.columns:
+            old["track"] = "A"
+        out = pd.concat([old[~old["track"].isin(due)], out], ignore_index=True)
+    out.to_csv(path, index=False)
+
     if not dry:
         bot.send_telegram(text)
 

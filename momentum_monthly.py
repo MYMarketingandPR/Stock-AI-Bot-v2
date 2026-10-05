@@ -11,7 +11,8 @@ momentum_monthly.py — 每月模擬交易提示：70% 動量前10隻 + 30% SPY�
 
 運作：GitHub Actions 每個交易日收市後跑。月尾最後一個交易日：發換倉名單（或者用 --force）；
 其他交易日：發模擬持倉由買入至今嘅表現。
-每次結果記錄落 paper_log/YYYY-MM-DD.csv（workflow會放上 paper-trading 分支），方便之後計模擬成績。
+每次結果記錄落 paper_log/YYYY-MM-DD.csv（workflow會放上 paper-trading 分支），同時寫入Google Sheet
+（用main.py同一個webhook：strategy=動量模擬｜動作、ev=回報%或動量%、pivot=買入/參考價、stop_loss=今日價）。
 用法：python momentum_monthly.py [--force] [--dry]
 """
 import io
@@ -30,6 +31,25 @@ import momentum_v1 as M
 M.PROGRESS = "/tmp/momentum_monthly_progress.txt"
 CAPITAL = float(os.environ.get("PAPER_CAPITAL", "10000"))
 MOM_SHARE, TOPN, LOOK, SKIP = 0.70, 10, 252, 21
+
+
+SHEET_WEBHOOK_URL = os.environ.get("SHEET_WEBHOOK_URL")
+
+
+def sheet_row(date, ticker, action, ret_pct, entry_px, now_px, dry):
+    """寫一行落Google Sheet（用返main.py同一個webhook同欄位）：
+    strategy = 動量模擬｜動作、ev = 回報%、pivot = 買入/參考價、stop_loss = 今日價（呢個方案冇止損）。"""
+    row = {"date": str(date), "ticker": ticker, "strategy": f"動量模擬｜{action}", "vix": "-",
+           "ev": f"{ret_pct:+.2f}%" if ret_pct is not None else "-",
+           "pivot": f"{entry_px:.2f}" if entry_px is not None else "-",
+           "stop_loss": f"{now_px:.2f}" if now_px is not None else "-"}
+    if dry or not SHEET_WEBHOOK_URL:
+        print("Sheet:", row)
+        return
+    try:
+        requests.post(SHEET_WEBHOOK_URL, json=row, timeout=10)
+    except Exception as e:
+        print(f"Google Sheet 紀錄失敗: {e}")
 
 
 def current_sp500():
@@ -87,6 +107,10 @@ def daily_status(today, dry):
         lines += ["", f"動量部分：${total:,.0f}（{(total / (per_stock * len(top)) - 1) * 100:+.1f}%）｜ 同期SPY {spy_r * 100:+.1f}%",
                   "今日唔使做嘢，月尾先換股。SPY部分睇另一個「SPY每日訊號」。", "_模擬交易，唔係投資建議_"]
         text = "\n".join(lines)
+        for t in top:
+            if np.isfinite(entry.get(t, np.nan)):
+                sheet_row(today, t, "持倉", (h[t].iloc[-1] / entry[t] - 1) * 100, entry[t], h[t].iloc[-1], dry)
+        sheet_row(today, "組合", f"總值 ${total:,.0f}", (total / (per_stock * len(top)) - 1) * 100, None, None, dry)
     print(text)
     if not dry:
         bot.send_telegram(text)
@@ -143,6 +167,11 @@ def main():
                   "momentum": [round(now[t], 4) for t in top], "weight": MOM_SHARE / TOPN,
                   "spy_signal": "hold" if spy_hold else "cash"}).to_csv(
         f"paper_log/{last_day}.csv", index=False)
+    for t in top:
+        sheet_row(last_day, t, "繼續持有" if t in prev_top else "買入（下個交易日收市）", now[t] * 100, px[t].iloc[i], px[t].iloc[i], dry)
+    for t in drop:
+        p = px[t].iloc[i] if t in px.columns else None
+        sheet_row(last_day, t, "賣出（下個交易日收市）", None, None, p, dry)
     if not dry:
         bot.send_telegram(text)
 

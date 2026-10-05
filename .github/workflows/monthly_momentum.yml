@@ -37,6 +37,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}
           PAPER_CAPITAL: "10000"
         run: |
           if [ "${{ inputs.force }}" = "yes" ]; then python -u momentum_monthly.py --force; else python -u momentum_monthly.py; fi

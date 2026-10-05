@@ -1,5 +1,5 @@
 """
-momentum_monthly.py — 動量模擬交易（三條線 + SPY基準，各自獨立 $10,000）
+momentum_monthly.py — 動量模擬交易（三條線 + SPY基準，各自獨立 $80,000）
 
   線A：70% 原始動量前10隻 + 30% SPY訊號方案，每半個月換（回測驗證期 +20.2%，最大跌幅 -35%）
   線B：100% 原始動量前3隻，每月換（回測驗證期 +22.7%，最大跌幅 -51%；只作研究）
@@ -36,7 +36,7 @@ import main as bot
 import momentum_v1 as M
 
 M.PROGRESS = "/tmp/momentum_monthly_progress.txt"
-CAPITAL = float(os.environ.get("PAPER_CAPITAL", "10000"))
+CAPITAL = float(os.environ.get("PAPER_CAPITAL", "80000"))
 COST = 0.001
 LOOK, SKIP = 252, 21
 TRACKS = {"A": {"label": "線A：原始前10隻70% + SPY30%（半月換）", "topn": 10, "mom_share": 0.70, "freq": "半月", "score": "原始"},
@@ -281,10 +281,10 @@ def main():
         for t in drop:
             sheet_row(last_day, tr, t, "賣出（下個交易日收市）", None, None,
                       px[t].iloc[i] if t in px.columns else None, dry)
-    lines += ["做法：下一個交易日收市前換倉（用收市價買賣，IB可以買碎股）。",
-              "止損：冇止損，跌出排名先賣。",
-              "⚠️ 線B只揸3隻，回測最大跌幅大約 -51%，只作研究。",
-              "_模擬交易，用嚟驗證回測，唔係投資建議_"]
+    lines += ["做法：下一個交易日收市前換倉（用收市價買賣，IB可以買碎股）。", "止損：冇止損，跌出排名先賣。"]
+    if "B" in due:
+        lines.append("⚠️ 線B只揸3隻，回測最大跌幅大約 -51%，只作研究。")
+    lines.append("_模擬交易，用嚟驗證回測，唔係投資建議_")
     text = "\n".join(lines)
     print(text)
     os.makedirs("paper_log", exist_ok=True)

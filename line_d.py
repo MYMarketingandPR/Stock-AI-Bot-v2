@@ -42,7 +42,7 @@ def load_state():
     if os.path.exists(STATE):
         with open(STATE) as f:
             return json.load(f)
-    return {"cash": CAPITAL, "hold": {}, "pending_sell": [], "pending_buy": [], "start": None, "last_date": None}
+    return {"cash": CAPITAL, "hold": {}, "pending_sell": [], "pending_buy": [], "pending_r12": {}, "start": None, "last_date": None}
 
 
 def append_tsv(path, row):
@@ -68,6 +68,11 @@ def main():
         print(f"線D：{today} 未有收市數據，可能休市。")
         return
     last = px.iloc[-1]
+    enough = px.notna().sum() >= 253
+    r12_all = (px.iloc[-1] / px.iloc[-253] - 1).where(enough)          # 過去12個月升幅（252個交易日）
+
+    def r12txt(v):
+        return "—" if v is None or not np.isfinite(v) else f"{v * 100:+.0f}%"
 
     def price(t):
         if t in px.columns:
@@ -105,13 +110,16 @@ def main():
             break
         st["cash"] -= amt
         sh = amt * (1 - COST) / p
-        st["hold"][t] = {"shares": sh, "entry_date": str(today), "entry_px": p, "peak": p, "last_px": p}
+        r_in = st.get("pending_r12", {}).get(t)
+        st["hold"][t] = {"shares": sh, "entry_date": str(today), "entry_px": p, "peak": p, "last_px": p, "r12_entry": r_in}
         traded += amt
         append_tsv(TRADES, {"date": str(today), "action": "買入", "ticker": t, "price": round(p, 2),
-                            "shares": round(sh, 4), "value": round(amt, 2), "return_pct": "", "reason": "倍升股"})
-        lines.append(f"✅ 已買入 {t} @ ${p:,.2f}（約 {sh:.2f} 股，${amt:,.0f}）")
-        MM.sheet_row(today, "D", t, "已買入", None, p, p * (1 - TRAIL), dry)
-    st["pending_sell"], st["pending_buy"] = [], []
+                            "shares": round(sh, 4), "value": round(amt, 2), "return_pct": "",
+                            "reason": f"倍升股（過去12個月 {r12txt(r_in)}）"})
+        lines.append(f"✅ 已買入 {t} @ ${p:,.2f}（約 {sh:.2f} 股，${amt:,.0f}；買入時過去12個月已升 {r12txt(r_in)}）")
+        MM.sheet_row(today, "D", t, f"已買入（過去12個月已升{r12txt(r_in)}）",
+                     r_in * 100 if r_in is not None else None, p, p * (1 - TRAIL), dry)
+    st["pending_sell"], st["pending_buy"], st["pending_r12"] = [], [], {}
     if st["start"] is None:
         st["start"] = str(today)
     # 2) 更新持倉、最高價
@@ -140,6 +148,7 @@ def main():
         sel = r12[(r12 >= 1.0) & (lastp > ma50) & (lastp > ma200)].sort_values(ascending=False)
         cands = [t for t in sel.index if t not in st["hold"]]
         st["pending_buy"] = cands[:free]
+        st["pending_r12"] = {t: float(r12[t]) for t in st["pending_buy"]}
     # 4) 訊息
     navs = pd.read_csv(NAV, sep="\t")
     nv = navs["nav"].values
@@ -158,9 +167,12 @@ def main():
         for t, h in st["hold"].items():
             r = (h["last_px"] / h["entry_px"] - 1) * 100
             off = (h["last_px"] / h["peak"] - 1) * 100
+            now12 = r12_all.get(t, np.nan)
             lines.append(f"• {t}（{names.get(t, '')}）{r:+.1f}% ｜ 今日 ${h['last_px']:,.2f} ｜ 最高 ${h['peak']:,.2f}"
-                         f"（離高位 {off:.1f}%）｜ 賣出線 ${h['peak'] * (1 - TRAIL):,.2f}")
-            MM.sheet_row(today, "D", t, "持倉", r, h["entry_px"], h["peak"] * (1 - TRAIL), dry)
+                         f"（離高位 {off:.1f}%）｜ 賣出線 ${h['peak'] * (1 - TRAIL):,.2f} ｜ "
+                         f"買入時12個月 {r12txt(h.get('r12_entry'))}、而家12個月 {r12txt(now12)}")
+            MM.sheet_row(today, "D", t, f"持倉（買入時12個月{r12txt(h.get('r12_entry'))}，而家{r12txt(now12)}）",
+                         r, h["entry_px"], h["peak"] * (1 - TRAIL), dry)
     else:
         lines.append("而家冇持倉。")
     lines.append(f"現金 ${st['cash']:,.0f}")
@@ -173,7 +185,10 @@ def main():
         lines.append("🟢 *下一個交易日收市前買入*（每隻大約 ${:,.0f}）：".format(per))
         for t in st["pending_buy"]:
             p = float(last[t])
-            lines.append(f"• {t}（{names.get(t, '')}）12個月 {float(r12[t]) * 100:+.0f}% ｜ 參考價 ${p:,.2f} ｜ 大約 {per / p:.2f} 股")
+            g = float(r12[t])
+            warn = " ⚠️ 已升超過2倍（歷史上追入風險較高，規則照買）" if g > 2.0 else ""
+            lines.append(f"• {t}（{names.get(t, '')}）過去12個月已升 {g * 100:+.0f}% ｜ 參考價 ${p:,.2f} ｜ 大約 {per / p:.2f} 股{warn}")
+            MM.sheet_row(today, "D", t, f"建議買入（下一個交易日收市；過去12個月已升{g * 100:+.0f}%）", g * 100, p, None, dry)
     if not st["pending_sell"] and not st["pending_buy"]:
         lines.append("⚪ 明日唔使買賣。")
     lines += ["", "規則：倍升股（12個月升≥100%）+ 喺MA50同MA200上面先買；由最高位跌20%就賣；揸最多5隻。",

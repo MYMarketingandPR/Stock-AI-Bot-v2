@@ -39,6 +39,7 @@ import requests
 
 import main as bot
 import momentum_v1 as M
+import sheet_v2 as SV
 
 M.PROGRESS = "/tmp/momentum_monthly_progress.txt"
 CAPITAL = float(os.environ.get("PAPER_CAPITAL", "80000"))
@@ -58,6 +59,8 @@ def sheet_row(date, track, ticker, action, ev, pivot, stop, dry):
            "stop_loss": stop if isinstance(stop, str) else (f"{stop:.2f}" if stop is not None else "-")}
     if dry or not SHEET_WEBHOOK_URL:
         print("Sheet:", row)
+        return
+    if SV.available():            # Apps Script 已經有新格式（分頁）→ 唔再寫舊格式，避免第一頁太亂
         return
     try:
         requests.post(SHEET_WEBHOOK_URL, json=row, timeout=10)
@@ -84,6 +87,22 @@ def is_last_trading_day(day):
 
 def is_mid_month_day(day):
     return day.weekday() < 5 and day.day <= 15 and next_weekday(day).day > 15
+
+
+def next_rebalance(day, freq):
+    d = day
+    for _ in range(45):
+        d = next_weekday(d)
+        if is_last_trading_day(d) or (freq == "半月" and is_mid_month_day(d)):
+            return d
+    return None
+
+
+def safe_names():
+    try:
+        return current_sp500()[1]
+    except Exception:
+        return {}
 
 
 def tracks_due(day):
@@ -169,11 +188,13 @@ def load_state(today):
         return None
     first = pd.Timestamp(logs["date"].min())
     allt = sorted(set(logs["ticker"]))
-    h = yf.download(allt + list(BENCH), start=(first - pd.Timedelta(days=7)).strftime("%Y-%m-%d"),
+    start_dl = min(first - pd.Timedelta(days=7), pd.Timestamp(today) - pd.Timedelta(days=400))
+    h = yf.download(allt + list(BENCH), start=start_dl.strftime("%Y-%m-%d"),
                     end=(pd.Timestamp(today) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
                     auto_adjust=True, progress=False)["Close"]
     if isinstance(h, pd.Series):
         h = h.to_frame()
+    h_all = h
     h = h[h.index > first]
     if h.empty or h.index[-1].date() != today:
         print(f"{today} 未有收市數據，可能休市。")
@@ -188,7 +209,14 @@ def load_state(today):
         if b in h.columns and np.isfinite(h[b].get(start_day, np.nan)):
             s = h[b][h.index >= start_day].ffill()
             bench_navs[b] = CAPITAL * s / s.iloc[0]
-    return {"logs": logs, "h": h, "navs": navs, "start_day": start_day, "bench": bench_navs, "spy_hold": spy_hold_eff}
+    r12 = {}
+    for t in h_all.columns:
+        sr = h_all[t].dropna()
+        sr = sr[sr.index <= pd.Timestamp(today)]
+        if len(sr) >= 253:
+            r12[t] = float(sr.iloc[-1] / sr.iloc[-253] - 1)
+    return {"logs": logs, "h": h, "navs": navs, "start_day": start_day, "bench": bench_navs, "spy_hold": spy_hold_eff,
+            "r12": r12, "h_all": h_all}
 
 
 def summary(nv):
@@ -202,6 +230,10 @@ def daily_status(today, dry):
     if S is None:
         return
     logs, h, navs, start_day = S["logs"], S["h"], S["navs"], S["start_day"]
+    r12 = S.get("r12", {})
+    names = safe_names()
+    hold_rows, daily_rows = [], []
+    spy_now = S.get("spy_hold", {}).get(h.index[-1], 0.0) > 0
     lines = [f"📊 *動量模擬交易* {today}（由 {start_day.date()} 開始，每條線 ${CAPITAL:,.0f}）", ""]
     for tr, cfg in TRACKS.items():
         if tr not in navs:
@@ -216,6 +248,37 @@ def daily_status(today, dry):
         sig_day = pd.Timestamp(last["date"].iloc[0])
         hh = h[h.index > sig_day]
         tks = list(last.sort_values("rank")["ticker"]) if "rank" in last else list(last["ticker"])
+        nxt = next_rebalance(today, cfg["freq"])
+        stock_val = 0.0
+        if len(hh) >= 1:
+            ed = hh.index[0]
+            nav_e = float(navs[tr]["nav"].get(ed, np.nan))
+            okt = [t for t in tks if t in hh.columns and np.isfinite(hh[t].iloc[0])]
+            alloc = nav_e * cfg["mom_share"] / max(len(okt), 1)
+            for t in okt:
+                ep, cp = float(hh[t].iloc[0]), float(hh[t].ffill().iloc[-1])
+                sh = alloc / ep
+                val = sh * cp
+                stock_val += val
+                r_in = ""
+                if "h_all" in S and t in S["h_all"].columns:
+                    sr = S["h_all"][t].dropna()
+                    sr = sr[sr.index <= ed]
+                    if len(sr) >= 253:
+                        r_in = round(float(sr.iloc[-1] / sr.iloc[-253] - 1) * 100, 1)
+                hold_rows.append([f"線{tr}", t, names.get(t, ""), str(ed.date()), round(ep, 2), round(sh, 4), round(alloc, 2),
+                                  round(cp, 2), round(val, 2), round(val - alloc, 2), round((cp / ep - 1) * 100, 2), "",
+                                  f"冇止損；{nxt} 換倉日跌出頭{cfg['topn']}名就賣（下一個交易日收市）",
+                                  r_in, round(r12[t] * 100, 1) if t in r12 else "", str(today)])
+            if cfg["mom_share"] < 1:
+                spy_val = float(nv.iloc[-1]) - stock_val
+                hold_rows.append([f"線{tr}", "SPY部分", "跟SPY每日訊號", str(ed.date()), "", "", round(nav_e * (1 - cfg["mom_share"]), 2),
+                                  round(float(h["SPY"].iloc[-1]), 2) if "SPY" in h.columns else "", round(spy_val, 2),
+                                  round(spy_val - nav_e * (1 - cfg["mom_share"]), 2), "", "",
+                                  "持有SPY（訊號轉現金就賣）" if spy_now else "揸現金（訊號轉持有就買SPY）", "", "", str(today)])
+        daily_rows.append([str(today), f"線{tr}", round(v, 2), round(tot, 2), round(dr, 2), round(mdd, 2),
+                           round(float(nv.iloc[-1]) - stock_val, 2) if cfg["mom_share"] < 1 and not spy_now else 0,
+                           len(tks), f"下次換倉 {nxt}"])
         if len(hh) == 1:
             lines.append(f"今日係換倉日（今日收市價買入）：{'、'.join(tks)}")
         elif len(hh) > 1:
@@ -233,6 +296,10 @@ def daily_status(today, dry):
         bv, btot, bmdd, bdr = summary(nv)
         lines.append(f"{BENCH[b]}：${bv:,.0f}（{btot:+.1f}%）｜ 今日 {bdr:+.1f}% ｜ 最大跌幅 {bmdd:.1f}%")
         sheet_row(today, b, b, "NAV", btot, bv, f"{bmdd:.1f}%", dry)
+        daily_rows.append([str(today), f"比較：{b}", round(bv, 2), round(btot, 2), round(bdr, 2), round(bmdd, 2), 0, 1,
+                           "第一日買入之後唔郁"])
+    SV.replace_group("現時持倉", SV.HOLD_HEADER, 1, [f"線{t}" for t in TRACKS], hold_rows, dry)
+    SV.upsert("每日總覽", SV.DAILY_HEADER, [r + [f"{r[0]}|{r[1]}"] for r in daily_rows], dry)
     lines += ["", "冇止損，換倉日先換股。線A、線C嘅SPY部分跟「SPY每日訊號」。", "_模擬交易，唔係投資建議_"]
     text = "\n".join(lines)
     print(text)
@@ -370,6 +437,10 @@ def monthly_scoreboard(today, dry):
     for name, p in stats.items():
         for key, lab, kind in SCORE_ROWS:
             sheet_row(today, name.replace("線", ""), lab, "月度成績表", _fmt(p.get(key), kind), None, "-", dry)
+    month = f"{today:%Y-%m}"
+    score_rows = [[month, lab] + [_fmt(stats[c].get(key), kind) if c in stats else "" for c in SV.SCORE_HEADER[2:]]
+                  for key, lab, kind in SCORE_ROWS]
+    SV.replace_group("每月成績表", SV.SCORE_HEADER, 1, [month], score_rows, dry)
     if not dry:
         bot.send_telegram(text)
 
@@ -418,6 +489,11 @@ def rebalance(today, due, force, dry):
 
     lines = [f"📅 *動量換倉（模擬交易）* {last_day}", f"每條線模擬本金 ${CAPITAL:,.0f}", ""]
     rows = []
+    trade_rows = []
+
+    def g12(t):
+        s_ = px[t].dropna() if t in px.columns else pd.Series(dtype=float)
+        return round(float(s_.iloc[-1] / s_.iloc[-253] - 1) * 100, 1) if len(s_) >= 253 else ""
     for tr, cfg in TRACKS.items():
         if tr not in due:
             continue
@@ -448,6 +524,22 @@ def rebalance(today, due, force, dry):
         for t in drop:
             sheet_row(last_day, tr, t, "賣出（下個交易日收市）", None, None,
                       px[t].iloc[i] if t in px.columns else None, dry)
+        prev_day = pd.Timestamp(lt["date"].max()) if not lt.empty else None
+        for t in top:
+            p = float(px[t].iloc[i])
+            act = "繼續持有" if t in prev_top else "建議買入（下一個交易日收市）"
+            trade_rows.append([str(last_day), f"線{tr}", act, t, names.get(t, ""), round(p, 2), round(per / p, 4), round(per, 2),
+                               "", g12(t), f"第{top.index(t) + 1}名；" + (f"動量 {sc['原始'].get(t, np.nan) * 100:+.0f}%"
+                                                                     if cfg["score"] == "原始" else f"綜合排名分 {ranked[t]:.2f}")])
+        for t in drop:
+            p = float(px[t].iloc[i]) if t in px.columns else np.nan
+            ret = ""
+            if prev_day is not None and t in px.columns:
+                after = px[t][px.index > prev_day].dropna()
+                if len(after):
+                    ret = round((p / float(after.iloc[0]) - 1) * 100, 2)
+            trade_rows.append([str(last_day), f"線{tr}", "建議賣出（下一個交易日收市）", t, names.get(t, ""),
+                               round(p, 2) if np.isfinite(p) else "", "", "", ret, g12(t), f"跌出頭{n}名"])
     lines += ["做法：下一個交易日收市前換倉（用收市價買賣，IB可以買碎股）。", "止損：冇止損，跌出排名先賣。"]
     if "B" in due:
         lines.append("⚠️ 線B只揸3隻，回測最大跌幅大約 -51%，只作研究。")
@@ -463,6 +555,7 @@ def rebalance(today, due, force, dry):
             old["track"] = "A"
         out = pd.concat([old[~old["track"].isin(due)], out], ignore_index=True)
     out.to_csv(path, index=False)
+    SV.upsert("買賣紀錄", SV.TRADE_HEADER, [r + [f"{r[0]}|{r[1]}|{r[3]}|{r[2]}"] for r in trade_rows], dry)
     if not dry:
         bot.send_telegram(text)
 

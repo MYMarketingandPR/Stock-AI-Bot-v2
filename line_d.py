@@ -51,8 +51,52 @@ def append_tsv(path, row):
     pd.DataFrame([row]).to_csv(path, sep="\t", index=False, mode="a", header=new)
 
 
+def sheet_only(dry):
+    """只將線D而家嘅狀態寫入 Google Sheet（唔交易、唔改紀錄、唔發 Telegram）。"""
+    st = load_state()
+    day = st.get("last_date")
+    if not day:
+        print("線D：未有紀錄。")
+        return
+    tickers, names = MM.current_sp500()
+    need = sorted(set(st["hold"]) | set(st["pending_buy"]))
+    if not need:
+        return
+    closes = M.download_close(need, (pd.Timestamp(day) - pd.Timedelta(days=420)).strftime("%Y-%m-%d"),
+                              (pd.Timestamp(day) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
+    px = pd.DataFrame(closes).sort_index()
+    r12 = {t: float(px[t].dropna().iloc[-1] / px[t].dropna().iloc[-253] - 1) for t in px.columns if px[t].notna().sum() >= 253}
+    navs = pd.read_csv(NAV, sep="\t") if os.path.exists(NAV) else pd.DataFrame({"nav": [CAPITAL]})
+    nav = float(navs["nav"].iloc[-1])
+    hold_rows = []
+    for t, h in st["hold"].items():
+        cost, val = h["shares"] * h["entry_px"], h["shares"] * h["last_px"]
+        hold_rows.append(["線D", t, names.get(t, ""), h["entry_date"], round(h["entry_px"], 2), round(h["shares"], 4), round(cost, 2),
+                          round(h["last_px"], 2), round(val, 2), round(val - cost, 2), round((h["last_px"] / h["entry_px"] - 1) * 100, 2),
+                          round(h["peak"], 2), f"收市 ≤ ${h['peak'] * (1 - TRAIL):,.2f} 就賣（由最高位跌20%，下一個交易日收市）",
+                          round(h["r12_entry"] * 100, 1) if h.get("r12_entry") is not None else "",
+                          round(r12[t] * 100, 1) if t in r12 else "", day])
+    SV.replace_group("現時持倉", SV.HOLD_HEADER, 1, ["線D"], hold_rows, dry)
+    per = nav / SLOTS
+    rows = []
+    for t in st["pending_buy"]:
+        if t not in px.columns:
+            continue
+        p = float(px[t].dropna().iloc[-1])
+        g = st.get("pending_r12", {}).get(t, r12.get(t))
+        rows.append([day, "線D", "建議買入（下一個交易日收市）", t, names.get(t, ""), round(p, 2), round(per / p, 4), round(per, 2), "",
+                     round(g * 100, 1) if g is not None else "", "已升超過2倍（歷史上追入風險較高，規則照買）" if g and g > 2 else "倍升股"])
+    SV.upsert("買賣紀錄", SV.TRADE_HEADER, [r + [f"{r[0]}|{r[1]}|{r[3]}|{r[2]}"] for r in rows], dry)
+    SV.upsert("每日總覽", SV.DAILY_HEADER, [[day, "線D", round(nav, 2), round((nav / CAPITAL - 1) * 100, 2), "", "",
+                                          round(st["cash"], 2), len(st["hold"]),
+                                          f"明日賣 {len(st['pending_sell'])} 隻、買 {len(st['pending_buy'])} 隻", f"{day}|線D"]], dry)
+
+
 def main():
     dry = "--dry" in sys.argv
+    if "--sheet-only" in sys.argv:
+        sheet_only(dry)
+        return
     today = datetime.now(ZoneInfo("America/New_York")).date()
     st = load_state()
     if st.get("last_date") == str(today):

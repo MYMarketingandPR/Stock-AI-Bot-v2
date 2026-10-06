@@ -18,6 +18,14 @@ on:
         description: "出每月成績表（yes = 換倉/每日報告之後再出；only = 只出成績表）"
         required: false
         default: "no"
+      sheetonly:
+        description: "只寫 Google Sheet（yes）：唔發Telegram、唔換倉、唔交易，用最近一個交易日"
+        required: false
+        default: "no"
+      date:
+        description: "配合 sheetonly：用邊一日（YYYY-MM-DD，留空 = 今日或最近交易日）"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -53,6 +61,7 @@ jobs:
           if [ -n "${{ inputs.tracks }}" ]; then ARGS="$ARGS --tracks=${{ inputs.tracks }}"; fi
           if [ "${{ inputs.scoreboard }}" = "yes" ]; then ARGS="$ARGS --scoreboard"; fi
           if [ "${{ inputs.scoreboard }}" = "only" ]; then ARGS="$ARGS --scoreboard-only"; fi
+          if [ "${{ inputs.sheetonly }}" = "yes" ]; then ARGS="--sheet-only --date=${{ inputs.date }}"; fi
           python -u momentum_monthly.py $ARGS
 
       - name: 線D（倍升股 + 由高位跌20%賣）
@@ -62,11 +71,13 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}
           PAPER_CAPITAL: "80000"
-        run: python -u line_d.py
+        run: |
+          if [ "${{ inputs.sheetonly }}" = "yes" ]; then python -u line_d.py --sheet-only; else python -u line_d.py; fi
 
       - name: 月尾記低分析師EPS預測（自己儲歷史數據，第十四輪）
         continue-on-error: true
-        run: python -u snapshot_estimates.py
+        run: |
+          if [ "${{ inputs.sheetonly }}" != "yes" ]; then python -u snapshot_estimates.py; fi
 
       - name: 將紀錄放去 paper-trading 分支
         run: |

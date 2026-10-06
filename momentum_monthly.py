@@ -225,7 +225,7 @@ def summary(nv):
     return nv.iloc[-1], (nv.iloc[-1] / CAPITAL - 1) * 100, mdd, day_r
 
 
-def daily_status(today, dry):
+def daily_status(today, dry, send=True):
     S = load_state(today)
     if S is None:
         return
@@ -307,7 +307,7 @@ def daily_status(today, dry):
     SV.upsert("每日總覽", SV.DAILY_HEADER, [r + [f"{r[0]}|{r[1]}"] for r in daily_rows], dry)
     lines += ["", "冇止損，換倉日先換股。線A、線C嘅SPY部分跟「SPY每日訊號」。", "_模擬交易，唔係投資建議_"]
     sections.append("\n".join(lines))
-    send_sections(head, sections, dry)
+    send_sections(head, sections, dry or not send)
 
 
 def send_sections(head, sections, dry, limit=3800):
@@ -468,6 +468,18 @@ def monthly_scoreboard(today, dry):
 def main():
     force, dry = "--force" in sys.argv, "--dry" in sys.argv
     today = datetime.now(ZoneInfo("America/New_York")).date()
+    if "--sheet-only" in sys.argv:          # 只寫 Google Sheet（唔發 Telegram、唔換倉），日期 = 最近一個交易日
+        d = [a.split("=")[1] for a in sys.argv if a.startswith("--date=") and len(a) > 7]
+        day = pd.Timestamp(d[0]).date() if d else today
+        while day.weekday() >= 5:
+            day -= timedelta(days=1)
+        ok = SV.available()
+        os.makedirs("paper_log", exist_ok=True)
+        with open("paper_log/sheet_v2_status.txt", "w") as f:
+            f.write(f"{datetime.now()} Apps Script 新格式：{'有' if ok else '冇（未部署新版本？）'}\n")
+        print(f"Sheet v2：{'有' if ok else '冇'}；日期 {day}")
+        daily_status(day, dry, send=False)
+        return
     want_board = "--scoreboard" in sys.argv or is_last_trading_day(today)
     if "--scoreboard-only" in sys.argv:
         monthly_scoreboard(today, dry)

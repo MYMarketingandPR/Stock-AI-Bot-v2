@@ -234,14 +234,15 @@ def daily_status(today, dry):
     names = safe_names()
     hold_rows, daily_rows = [], []
     spy_now = S.get("spy_hold", {}).get(h.index[-1], 0.0) > 0
-    lines = [f"📊 *動量模擬交易* {today}（由 {start_day.date()} 開始，每條線 ${CAPITAL:,.0f}）", ""]
+    sections = []
+    head = f"📊 *動量模擬交易* {today}（由 {start_day.date()} 開始，每條線 ${CAPITAL:,.0f}）"
     for tr, cfg in TRACKS.items():
         if tr not in navs:
             continue
         nv = navs[tr]["nav"]
         v, tot, mdd, dr = summary(nv)
-        lines.append(f"*{cfg['label']}*")
-        lines.append(f"總值 ${v:,.0f}（{tot:+.1f}%）｜ 今日 {dr:+.1f}% ｜ 最大跌幅 {mdd:.1f}%")
+        lines = [f"*{cfg['label']}*"]
+        lines.append(f"總值 ${v:,.0f}（{tot:+.1f}%，{v - CAPITAL:+,.0f}）｜ 今日 {dr:+.1f}% ｜ 最大跌幅 {mdd:.1f}%")
         sheet_row(today, tr, "組合", "NAV", tot, v, f"{mdd:.1f}%", dry)
         lt = logs[logs["track"] == tr]
         last = lt[lt["date"] == lt["date"].max()]
@@ -255,7 +256,9 @@ def daily_status(today, dry):
             nav_e = float(navs[tr]["nav"].get(ed, np.nan))
             okt = [t for t in tks if t in hh.columns and np.isfinite(hh[t].iloc[0])]
             alloc = nav_e * cfg["mom_share"] / max(len(okt), 1)
-            for t in okt:
+            first_day = len(hh) == 1
+            lines.append(f"{'今日係換倉日，今日收市價買入' if first_day else f'{ed.date()} 收市買入'}（每隻大約 ${alloc:,.0f}）：")
+            for k, t in enumerate(okt, 1):
                 ep, cp = float(hh[t].iloc[0]), float(hh[t].ffill().iloc[-1])
                 sh = alloc / ep
                 val = sh * cp
@@ -266,12 +269,18 @@ def daily_status(today, dry):
                     sr = sr[sr.index <= ed]
                     if len(sr) >= 253:
                         r_in = round(float(sr.iloc[-1] / sr.iloc[-253] - 1) * 100, 1)
+                g_now = f"{r12[t] * 100:+.0f}%" if t in r12 else "—"
+                lines.append(f"{k}. {t}（{names.get(t, '')}）買入 ${ep:,.2f} → 今日 ${cp:,.2f} ｜ {sh:.2f} 股 ｜ "
+                             f"{val - alloc:+,.0f}（{(cp / ep - 1) * 100:+.1f}%）｜ 過去12個月 {g_now}")
                 hold_rows.append([f"線{tr}", t, names.get(t, ""), str(ed.date()), round(ep, 2), round(sh, 4), round(alloc, 2),
                                   round(cp, 2), round(val, 2), round(val - alloc, 2), round((cp / ep - 1) * 100, 2), "",
                                   f"冇止損；{nxt} 換倉日跌出頭{cfg['topn']}名就賣（下一個交易日收市）",
                                   r_in, round(r12[t] * 100, 1) if t in r12 else "", str(today)])
             if cfg["mom_share"] < 1:
                 spy_val = float(nv.iloc[-1]) - stock_val
+                base_spy = nav_e * (1 - cfg["mom_share"])
+                lines.append(f"SPY部分：${base_spy:,.0f} → ${spy_val:,.0f}（{spy_val - base_spy:+,.0f}）｜ "
+                             f"{'而家持有SPY' if spy_now else '而家揸現金'}（跟SPY每日訊號）")
                 hold_rows.append([f"線{tr}", "SPY部分", "跟SPY每日訊號", str(ed.date()), "", "", round(nav_e * (1 - cfg["mom_share"]), 2),
                                   round(float(h["SPY"].iloc[-1]), 2) if "SPY" in h.columns else "", round(spy_val, 2),
                                   round(spy_val - nav_e * (1 - cfg["mom_share"]), 2), "", "",
@@ -279,19 +288,15 @@ def daily_status(today, dry):
         daily_rows.append([str(today), f"線{tr}", round(v, 2), round(tot, 2), round(dr, 2), round(mdd, 2),
                            round(float(nv.iloc[-1]) - stock_val, 2) if cfg["mom_share"] < 1 and not spy_now else 0,
                            len(tks), f"下次換倉 {nxt}"])
-        if len(hh) == 1:
-            lines.append(f"今日係換倉日（今日收市價買入）：{'、'.join(tks)}")
-        elif len(hh) > 1:
+        if len(hh) > 1:
             entry = hh.iloc[0]
-            parts = []
             for t in tks:
                 if np.isfinite(entry.get(t, np.nan)):
                     r = (hh[t].iloc[-1] / entry[t] - 1) * 100
-                    parts.append(f"{t} {r:+.1f}%")
                     sheet_row(today, tr, t, "持倉", r, entry[t], hh[t].iloc[-1], dry)
-            lines.append(f"今期（{hh.index[0].date()} 買入）：" + "、".join(parts))
-        lines.append("")
-    lines.append("*比較對象（第一日買入之後唔郁）*")
+        lines.append(f"幾時賣：冇止損；下次換倉日 {nxt} 收市後重新排名，跌出頭{cfg['topn']}名嘅下一個交易日收市賣出。")
+        sections.append("\n".join(lines))
+    lines = ["*比較對象（第一日買入之後唔郁）*"]
     for b, nv in S["bench"].items():
         bv, btot, bmdd, bdr = summary(nv)
         lines.append(f"{BENCH[b]}：${bv:,.0f}（{btot:+.1f}%）｜ 今日 {bdr:+.1f}% ｜ 最大跌幅 {bmdd:.1f}%")
@@ -301,10 +306,24 @@ def daily_status(today, dry):
     SV.replace_group("現時持倉", SV.HOLD_HEADER, 1, [f"線{t}" for t in TRACKS], hold_rows, dry)
     SV.upsert("每日總覽", SV.DAILY_HEADER, [r + [f"{r[0]}|{r[1]}"] for r in daily_rows], dry)
     lines += ["", "冇止損，換倉日先換股。線A、線C嘅SPY部分跟「SPY每日訊號」。", "_模擬交易，唔係投資建議_"]
-    text = "\n".join(lines)
-    print(text)
-    if not dry:
-        bot.send_telegram(text)
+    sections.append("\n".join(lines))
+    send_sections(head, sections, dry)
+
+
+def send_sections(head, sections, dry, limit=3800):
+    """Telegram 每個訊息最多大約4000字：按段落分開發。"""
+    msgs, cur = [], head
+    for sec in sections:
+        if len(cur) + len(sec) + 2 > limit:
+            msgs.append(cur)
+            cur = head + "（續）"
+        cur += "\n\n" + sec
+    msgs.append(cur)
+    for m in msgs:
+        print(m)
+        print("-" * 20)
+        if not dry:
+            bot.send_telegram(m)
 
 
 # ---------------- 每月成績表 ----------------

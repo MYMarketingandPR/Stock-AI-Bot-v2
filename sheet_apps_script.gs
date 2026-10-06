@@ -1,15 +1,30 @@
-// ================================================================
-// Google Sheet 新格式（模擬交易分頁）— 2026-10-06
-// 做法：
-//   1. 喺你現有嘅 doPost(e) 函數入面，最頂（第一行）加呢兩行：
-//
-//        var _d = JSON.parse(e.postData.contents);
-//        if (_d.v == 2) return handleV2(_d);
-//
-//   2. 將下面全部（由 doGet 開始）貼喺 Apps Script 最底。
-//   3. 部署 → 管理部署 → 揀現有嗰個 → 鉛筆（編輯）→ 版本揀「新版本」→ 部署。（網址唔會變）
-// 舊格式（main.py SPY訊號等）完全唔受影響。
-// ================================================================
+// Google Sheet 接收程式（2026-10-06 版）
+// 舊格式（main.py SPY訊號、短擠壓等）：照舊加一行喺第一頁
+// 新格式（模擬交易 v2）：寫入「現時持倉」「每日總覽」「買賣紀錄」「每月成績表」分頁
+
+function doPost(e) {
+  try {
+    var data = JSON.parse(e.postData.contents);
+    if (data.v == 2) {
+      return handleV2(data);
+    }
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+    sheet.appendRow([
+      data.date,
+      data.ticker,
+      data.vix,
+      data.strategy,
+      data.ev,
+      data.pivot,
+      data.stop_loss,
+      "",
+      ""
+    ]);
+    return ContentService.createTextOutput("Success");
+  } catch (error) {
+    return ContentService.createTextOutput("Error: " + error.message);
+  }
+}
 
 function doGet(e) {
   if (e && e.parameter && e.parameter.ping == "v2") {
@@ -23,6 +38,9 @@ function handleV2(d) {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
+    if (d.action == "ping") {
+      return ContentService.createTextOutput("v2-ok");
+    }
     var sh = ss.getSheetByName(d.tab);
     if (!sh) {
       sh = ss.insertSheet(d.tab);
@@ -45,8 +63,10 @@ function handleV2(d) {
       var start = sh.getLastRow() + 1;
       sh.getRange(start, 1, d.rows.length, d.rows[0].length).setValues(d.rows);
     }
+    return ContentService.createTextOutput("ok");
+  } catch (error) {
+    return ContentService.createTextOutput("Error: " + error.message);
   } finally {
     lock.releaseLock();
   }
-  return ContentService.createTextOutput("ok");
 }

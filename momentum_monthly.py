@@ -6,6 +6,7 @@ momentum_monthly.py — 動量模擬交易（三條線 + SPY基準，各自獨�
   線C：70% 多週期動量前10隻 + 30% SPY訊號方案，每半個月換
        多週期 = 3個月、6個月、12-1個月三個排名取平均（第九輪C6：驗證期 +16.4%，最大跌幅 -31%）
   線D：倍升股 + 由高位跌20%賣（line_d.py，每日獨立跑同發訊息；月尾成績表會一齊列出）
+  輪動：美股/納指/海外股/長債/黃金，高過10個月平均先揸，每樣20%（rotation_live.py；2026-10-07 開始）
   比較對象：SPY、QQQ、QQQM（QQQ平價版）、MTUM（動量ETF）——第一次換倉日買入長揸
        （第十二輪發現線A歷史上同QQQ差唔多、回報大部分係動量因子，所以要同QQQ同MTUM比）
   每月成績表：月尾最後一個交易日（或 --scoreboard）出一次：今年至今、開始至今、年化、最大跌幅、波幅、
@@ -39,6 +40,7 @@ import requests
 
 import main as bot
 import momentum_v1 as M
+import rotation_live as RL
 import sheet_v2 as SV
 
 M.PROGRESS = "/tmp/momentum_monthly_progress.txt"
@@ -219,6 +221,16 @@ def load_state(today):
             "r12": r12, "h_all": h_all}
 
 
+def rotation_state(today):
+    """輪動（rotation_live.py）：下載5個ETF、由開始日計到今日。出錯唔影響其他線。"""
+    try:
+        px = RL.download(today)
+        return RL.simulate(px, get_rf(px.index), today, is_last_trading_day(today), CAPITAL)
+    except Exception as e:
+        print(f"輪動計唔到：{e}")
+        return None
+
+
 def summary(nv):
     mdd = (nv / nv.cummax() - 1).min() * 100
     day_r = (nv.iloc[-1] / nv.iloc[-2] - 1) * 100 if len(nv) > 1 else 0.0
@@ -296,6 +308,17 @@ def daily_status(today, dry, send=True):
                     sheet_row(today, tr, t, "持倉", r, entry[t], hh[t].iloc[-1], dry)
         lines.append(f"幾時賣：冇止損；下次換倉日 {nxt} 收市後重新排名，跌出頭{cfg['topn']}名嘅下一個交易日收市賣出。")
         sections.append("\n".join(lines))
+    R = rotation_state(today)
+    if R is not None:
+        try:
+            sec, rrows, drow = RL.report(R, today, CAPITAL)
+            sections.append(sec)
+            hold_rows += rrows
+            daily_rows.append(drow)
+            if R["trades"]:
+                SV.upsert("買賣紀錄", SV.TRADE_HEADER, [t + [f"{t[0]}|輪動|{t[3]}|{t[2]}"] for t in R["trades"]], dry)
+        except Exception as e:
+            print(f"輪動報告出錯：{e}")
     lines = ["*比較對象（第一日買入之後唔郁）*"]
     for b, nv in S["bench"].items():
         bv, btot, bmdd, bdr = summary(nv)
@@ -303,7 +326,7 @@ def daily_status(today, dry, send=True):
         sheet_row(today, b, b, "NAV", btot, bv, f"{bmdd:.1f}%", dry)
         daily_rows.append([str(today), f"比較：{b}", round(bv, 2), round(btot, 2), round(bdr, 2), round(bmdd, 2), 0, 1,
                            "第一日買入之後唔郁"])
-    SV.replace_group("現時持倉", SV.HOLD_HEADER, 1, [f"線{t}" for t in TRACKS], hold_rows, dry)
+    SV.replace_group("現時持倉", SV.HOLD_HEADER, 1, [f"線{t}" for t in TRACKS] + ["輪動"], hold_rows, dry)
     SV.upsert("每日總覽", SV.DAILY_HEADER, [r + [f"{r[0]}|{r[1]}"] for r in daily_rows], dry)
     lines += ["", "冇止損，換倉日先換股。線A、線C嘅SPY部分跟「SPY每日訊號」。", "_模擬交易，唔係投資建議_"]
     sections.append("\n".join(lines))
@@ -394,6 +417,14 @@ def monthly_scoreboard(today, dry):
             r = dn["nav"].pct_change()
             r.iloc[0] = dn["nav"].iloc[0] / CAPITAL - 1
             series["線D"] = (r, dn["turn"].astype(float))
+    R = rotation_state(today)                               # 輪動（rotation_live.py）
+    if R is not None and len(R["nav"]) >= 1:
+        nv = R["nav"]
+        r = nv.pct_change()
+        r.iloc[0] = nv.iloc[0] / CAPITAL - 1
+        t = R["turn"].copy()
+        t.iloc[0] = 0.0
+        series["輪動"] = (r, t)
     for b, nv in S["bench"].items():
         series[b] = (nv.pct_change().fillna(0.0), pd.Series(0.0, index=nv.index))
     # SPY訊號方案（main.py：持有就揸SPY，現金就揸現金）同兩個組合（用模擬交易真實數字，每日固定比例）
@@ -410,7 +441,8 @@ def monthly_scoreboard(today, dry):
         if len(df) < 2:
             return None
         return sum(w * df[k] for k, w in weights.items())
-    for name, wts in (("組合甲", {"SPY訊號": 0.70, "線A": 0.15, "線D": 0.15}), ("組合乙", {"QQQ": 0.85, "線D": 0.15})):
+    for name, wts in (("組合甲", {"SPY訊號": 0.70, "線A": 0.15, "線D": 0.15}), ("組合乙", {"QQQ": 0.85, "線D": 0.15}),
+                       ("組合丙", {"輪動": 0.50, "線D": 0.50})):
         if all(k in series for k in wts):
             r = combo(wts)
             if r is not None:
@@ -438,9 +470,12 @@ def monthly_scoreboard(today, dry):
     lines = [f"🗓️ *每月成績表* {today}（由 {start_day.date()} 開始，{days} 個交易日）", "",
              "*我哋嘅線*", table(["線A", "線B", "線C", "線D"]), "",
              "*比較對象*", table(["SPY", "QQQ", "QQQM", "MTUM"]), "",
-             "*兩個組合（用模擬交易真實數字計，每日固定比例）*", table(["組合甲", "組合乙", "SPY訊號", "QQQ"]),
+             "*三個組合（用模擬交易真實數字計，每日固定比例）*", table(["組合甲", "組合乙", "組合丙", "QQQ"]),
              "組合甲 = 70% SPY訊號 + 15% 線A + 15% 線D（回測守得住科網爆煲：2000-2009 最大跌幅 -31%）",
-             "組合乙 = 85% QQQ + 15% 線D（回測2015年起回報較高，但2000-2009 最大跌幅 -77%）", "",
+             "組合乙 = 85% QQQ + 15% 線D（回測2015年起回報較高，但2000-2009 最大跌幅 -77%）",
+             "組合丙 = 50% 輪動 + 50% 線D（回測2015年起 +15.0% / 最大跌幅 -20.3%；2000-2009 最大跌幅 -22%）", "",
+             "*核心部分*", table(["輪動", "SPY訊號", "SPY"]),
+             "輪動 = 美股/納指/海外股/長債/黃金，月尾高過10個月平均先揸，每樣20%（2026-10-07 開始）", "",
              "點睇：",
              "• 未夠半年唔計年化回報同Calmar（數字會好誇張）；近3/6/12個月要夠日子先有。",
              "• 升市/跌市捕捉係同QQQ比：例如 120% / 100% = 升市多賺、跌市冇多蝕，好；120% / 150% = 多賺只係因為承受多咗跌。",

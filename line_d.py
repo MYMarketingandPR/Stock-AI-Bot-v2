@@ -33,9 +33,13 @@ COST = 0.001
 SLOTS = 5
 TRAIL = 0.20
 # 線D2（2026-10-08 加，第二十二輪X2）：同線D一樣，但 SPY 每日訊號 = 「現金」嗰陣唔開新倉（已揸嘅照舊跌20%賣）
-TAG = "D2" if "--variant=D2" in sys.argv else "D"
+# 線E（2026-10-08 加，第二十六輪Y3）：今年升 ≥30% + 收市 ≥ 52週最高收市價 × 0.7 + 收市 > MA200 就買（揀今年升得最多）；
+#   收市 < MA200 或者 收市 < 52週最高收市價 × 0.7 就賣；揸最多5隻。
+TAG = "E" if "--variant=E" in sys.argv else ("D2" if "--variant=D2" in sys.argv else "D")
 LABEL = f"線{TAG}"
 SPY_GATE = TAG == "D2"
+IS_E = TAG == "E"
+LOOKBACK_DAYS = 760                 # 夠計「之前一年」升幅（504個交易日）
 STATE = f"paper_log/line{TAG}_state.json"
 NAV = f"paper_log/line{TAG}_nav.tsv"
 TRADES = f"paper_log/line{TAG}_trades.tsv"
@@ -46,6 +50,30 @@ def load_state():
         with open(STATE) as f:
             return json.load(f)
     return {"cash": CAPITAL, "hold": {}, "pending_sell": [], "pending_buy": [], "pending_r12": {}, "start": None, "last_date": None}
+
+
+def prev_year(s):
+    """之前一年升幅：252至504個交易日前（s = 已去除空值嘅收市價）。唔夠數據回傳 None。"""
+    return float(s.iloc[-253] / s.iloc[-505] - 1) if len(s) >= 505 else None
+
+
+def second_txt(g):
+    """第二次倍升提示（第二十五輪：之前一年都已經升 ≥100% 嘅股票，之後12個月中位數 -14.8%）。只係提醒，唔影響買賣。"""
+    return f"⚠️ 第二次倍升（之前一年 {g * 100:+.0f}%）" if g is not None and g >= 1.0 else ""
+
+
+def e_levels(s):
+    """線E：回傳（200日平均, 52週最高收市價 × 0.7）。"""
+    return (float(s.iloc[-200:].mean()) if len(s) >= 200 else None, float(s.iloc[-252:].max()) * 0.7 if len(s) >= 200 else None)
+
+
+def sell_rule_txt(h, s):
+    if not IS_E:
+        return f"收市 ≤ ${h['peak'] * (1 - TRAIL):,.2f} 就賣（由最高位跌20%，下一個交易日收市）"
+    m, k = e_levels(s)
+    if m is None:
+        return "收市跌穿200日線，或者低過52週最高位 × 0.7 就賣"
+    return f"收市低過 ${max(m, k):,.2f} 就賣（200日線 ${m:,.2f}／52週最高位×0.7 ${k:,.2f}，邊個高用邊個；下一個交易日收市）"
 
 
 def append_tsv(path, row):
@@ -64,7 +92,7 @@ def sheet_only(dry):
     need = sorted(set(st["hold"]) | set(st["pending_buy"]))
     if not need:
         return
-    closes = M.download_close(need, (pd.Timestamp(day) - pd.Timedelta(days=420)).strftime("%Y-%m-%d"),
+    closes = M.download_close(need, (pd.Timestamp(day) - pd.Timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d"),
                               (pd.Timestamp(day) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
     px = pd.DataFrame(closes).sort_index()
     r12 = {t: float(px[t].dropna().iloc[-1] / px[t].dropna().iloc[-253] - 1) for t in px.columns if px[t].notna().sum() >= 253}
@@ -73,9 +101,12 @@ def sheet_only(dry):
     hold_rows = []
     for t, h in st["hold"].items():
         cost, val = h["shares"] * h["entry_px"], h["shares"] * h["last_px"]
-        hold_rows.append([LABEL, t, names.get(t, ""), h["entry_date"], round(h["entry_px"], 2), round(h["shares"], 4), round(cost, 2),
+        sx = px[t].dropna() if t in px.columns else pd.Series(dtype=float)
+        flag = second_txt(prev_year(sx))
+        hold_rows.append([LABEL, t, (names.get(t, "") + (" " + flag if flag else "")).strip(), h["entry_date"], round(h["entry_px"], 2),
+                          round(h["shares"], 4), round(cost, 2),
                           round(h["last_px"], 2), round(val, 2), round(val - cost, 2), round((h["last_px"] / h["entry_px"] - 1) * 100, 2),
-                          round(h["peak"], 2), f"收市 ≤ ${h['peak'] * (1 - TRAIL):,.2f} 就賣（由最高位跌20%，下一個交易日收市）",
+                          round(h["peak"], 2), sell_rule_txt(h, sx),
                           round(h["r12_entry"] * 100, 1) if h.get("r12_entry") is not None else "",
                           round(r12[t] * 100, 1) if t in r12 else "", day])
     SV.replace_group("現時持倉", SV.HOLD_HEADER, 1, [LABEL], hold_rows, dry)
@@ -87,7 +118,9 @@ def sheet_only(dry):
         p = float(px[t].dropna().iloc[-1])
         g = st.get("pending_r12", {}).get(t, r12.get(t))
         rows.append([day, LABEL, "建議買入（下一個交易日收市）", t, names.get(t, ""), round(p, 2), round(per / p, 4), round(per, 2), "",
-                     round(g * 100, 1) if g is not None else "", "已升超過2倍（歷史上追入風險較高，規則照買）" if g and g > 2 else "倍升股"])
+                     round(g * 100, 1) if g is not None else "",
+                     "；".join(x for x in [("今年升≥30%，近52週高位，喺MA200上面" if IS_E else ("已升超過2倍（歷史上追入風險較高，規則照買）" if g and g > 2 else "倍升股")),
+                                           second_txt(prev_year(px[t].dropna()))] if x)])
     if os.path.exists(TRADES):                    # 已執行嘅買賣：由紀錄檔重寫（價錢有改正都會更新）
         tr = pd.read_csv(TRADES, sep="\t")
         for _, x in tr.iterrows():
@@ -113,7 +146,7 @@ def main():
     tickers, names = MM.current_sp500()
     held = list(st["hold"])
     need = sorted(set(tickers) | set(held) | set(st["pending_buy"]) | {"QQQ"})
-    closes = M.download_close(need, (pd.Timestamp(today) - pd.Timedelta(days=420)).strftime("%Y-%m-%d"),
+    closes = M.download_close(need, (pd.Timestamp(today) - pd.Timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d"),
                               (pd.Timestamp(today) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
     px = pd.DataFrame(closes).sort_index()
     px = px[px.index.dayofweek < 5]
@@ -147,8 +180,9 @@ def main():
                 return float(v)
         return None
 
-    title = "線D2：線D + SPY訊號「持有」先開新倉" if SPY_GATE else "線D：倍升股 + 由高位跌20%賣"
-    lines = [f"🅳 *{title}*（模擬本金 ${CAPITAL:,.0f}）{today}", ""]
+    title = ("線E：今年升≥30% + 離高位<30% + 喺MA200上面" if IS_E else
+             "線D2：線D + SPY訊號「持有」先開新倉" if SPY_GATE else "線D：倍升股 + 由高位跌20%賣")
+    lines = [f"{'🅴' if IS_E else '🅳'} *{title}*（模擬本金 ${CAPITAL:,.0f}）{today}", ""]
     traded = 0.0
     trade_rows = []
     if stale:
@@ -168,11 +202,12 @@ def main():
             ret = (p / h["entry_px"] - 1) * 100
             append_tsv(TRADES, {"date": str(today), "action": "賣出", "ticker": t, "price": round(p, 2),
                                 "shares": round(h["shares"], 4), "value": round(v, 2), "return_pct": round(ret, 2),
-                                "reason": "由高位跌20%"})
+                                "reason": "跌穿200日線或者離52週高位超過30%" if IS_E else "由高位跌20%"})
             lines.append(f"✅ 已賣出 {t} @ ${p:,.2f}（今次 {ret:+.1f}%）")
             trade_rows.append([str(today), LABEL, "已賣出", t, names.get(t, ""), round(p, 2), round(h["shares"], 4), round(v, 2),
                                round(ret, 2), round(float(r12_all.get(t, np.nan)) * 100, 1) if np.isfinite(r12_all.get(t, np.nan)) else "",
-                               f"由最高位 ${h['peak']:,.2f} 跌 ≥20%（買入日 {h['entry_date']}，買入價 ${h['entry_px']:,.2f}）"])
+                               ("跌穿200日線或者離52週高位超過30%" if IS_E else f"由最高位 ${h['peak']:,.2f} 跌 ≥20%")
+                               + f"（買入日 {h['entry_date']}，買入價 ${h['entry_px']:,.2f}）"])
             MM.sheet_row(today, TAG, t, "已賣出", ret, p, h["peak"], dry)
     total = st["cash"] + sum(h["shares"] * (price(t) or h["last_px"]) for t, h in st["hold"].items())
     for t in st["pending_buy"]:
@@ -191,13 +226,15 @@ def main():
         traded += amt
         append_tsv(TRADES, {"date": str(today), "action": "買入", "ticker": t, "price": round(p, 2),
                             "shares": round(sh, 4), "value": round(amt, 2), "return_pct": "",
-                            "reason": f"倍升股（過去12個月 {r12txt(r_in)}）"})
+                            "reason": (f"今年升 {r12txt(st.get('pending_ytd', {}).get(t))}（過去12個月 {r12txt(r_in)}）" if IS_E
+                                       else f"倍升股（過去12個月 {r12txt(r_in)}）")})
         lines.append(f"✅ 已買入 {t} @ ${p:,.2f}（約 {sh:.2f} 股，${amt:,.0f}；買入時過去12個月已升 {r12txt(r_in)}）")
         trade_rows.append([str(today), LABEL, "已買入", t, names.get(t, ""), round(p, 2), round(sh, 4), round(amt, 2), "",
-                           round(r_in * 100, 1) if r_in is not None else "", f"賣出線 ${p * (1 - TRAIL):,.2f}（之後跟最高價 × 0.8 上移）"])
+                           round(r_in * 100, 1) if r_in is not None else "",
+                           "跌穿200日線或者低過52週最高位 × 0.7 就賣" if IS_E else f"賣出線 ${p * (1 - TRAIL):,.2f}（之後跟最高價 × 0.8 上移）"])
         MM.sheet_row(today, TAG, t, f"已買入（過去12個月已升{r12txt(r_in)}）",
                      r_in * 100 if r_in is not None else None, p, p * (1 - TRAIL), dry)
-    st["pending_sell"], st["pending_buy"], st["pending_r12"] = list(carry_sell), [], {}
+    st["pending_sell"], st["pending_buy"], st["pending_r12"], st["pending_ytd"] = list(carry_sell), [], {}, {}
     if st["start"] is None:
         st["start"] = str(today)
     # 2) 更新持倉、最高價
@@ -210,7 +247,13 @@ def main():
     append_tsv(NAV, {"date": str(today), "nav": round(nav, 2), "turn": round(traded / nav, 4) if nav > 0 else 0})
     # 3) 今日收市決定
     for t, h in st["hold"].items():
-        if t not in st["pending_sell"] and price(t) and h["last_px"] <= h["peak"] * (1 - TRAIL):
+        if t in st["pending_sell"] or not price(t):
+            continue
+        if IS_E:
+            m, k = e_levels(px[t].dropna())
+            if m is not None and (h["last_px"] < m or h["last_px"] < k):
+                st["pending_sell"].append(t)
+        elif h["last_px"] <= h["peak"] * (1 - TRAIL):
             st["pending_sell"].append(t)
     free = SLOTS - (len(st["hold"]) - len(st["pending_sell"]))
     cands = []
@@ -231,10 +274,18 @@ def main():
         ma50 = p0[uni].iloc[-50:].mean()
         ma200 = p0[uni].iloc[-200:].mean()
         lastp = p0[uni].iloc[-1]
-        sel = r12[(r12 >= 1.0) & (lastp > ma50) & (lastp > ma200)].sort_values(ascending=False)
+        if IS_E:
+            ye = p0[uni][p0.index.year < today.year].ffill().iloc[-1]          # 上年最後收市價
+            ytd = lastp / ye - 1
+            hi52 = p0[uni].iloc[-252:].max()
+            sel = ytd[(ytd >= 0.30) & (lastp >= hi52 * 0.7) & (lastp > ma200)].sort_values(ascending=False)
+        else:
+            sel = r12[(r12 >= 1.0) & (lastp > ma50) & (lastp > ma200)].sort_values(ascending=False)
         cands = [t for t in sel.index if t not in st["hold"]]
         st["pending_buy"] = cands[:free]
         st["pending_r12"] = {t: float(r12[t]) for t in st["pending_buy"]}
+        if IS_E:
+            st["pending_ytd"] = {t: float(ytd[t]) for t in st["pending_buy"]}
     # 4) 訊息
     navs = pd.read_csv(NAV, sep="\t")
     nv = navs["nav"].values
@@ -251,21 +302,29 @@ def main():
     hold_rows = []
     lines.append("")
     if st["hold"]:
-        lines.append("*持倉*（止賺/止蝕線 = 最高價 × 0.8）")
+        lines.append("*持倉*（" + ("賣出線 = 200日線同52週最高位×0.7 邊個高用邊個" if IS_E else "止賺/止蝕線 = 最高價 × 0.8") + "）")
         for t, h in st["hold"].items():
             r = (h["last_px"] / h["entry_px"] - 1) * 100
             off = (h["last_px"] / h["peak"] - 1) * 100
             now12 = r12_all.get(t, np.nan)
+            sx = px[t].dropna() if t in px.columns else pd.Series(dtype=float)
+            flag = second_txt(prev_year(sx))
+            if IS_E:
+                m, k = e_levels(sx)
+                sl = f"賣出線 ${max(m, k):,.2f}（200日線 ${m:,.2f}／高位×0.7 ${k:,.2f}）" if m is not None else "賣出線 —"
+            else:
+                sl = f"賣出線 ${h['peak'] * (1 - TRAIL):,.2f}"
             lines.append(f"• {t}（{names.get(t, '')}）{r:+.1f}% ｜ 今日 ${h['last_px']:,.2f} ｜ 最高 ${h['peak']:,.2f}"
-                         f"（離高位 {off:.1f}%）｜ 賣出線 ${h['peak'] * (1 - TRAIL):,.2f} ｜ "
-                         f"買入時12個月 {r12txt(h.get('r12_entry'))}、而家12個月 {r12txt(now12)}")
+                         f"（離高位 {off:.1f}%）｜ {sl} ｜ "
+                         f"買入時12個月 {r12txt(h.get('r12_entry'))}、而家12個月 {r12txt(now12)}" + (f" ｜ {flag}" if flag else ""))
             MM.sheet_row(today, TAG, t, f"持倉（買入時12個月{r12txt(h.get('r12_entry'))}，而家{r12txt(now12)}）",
                          r, h["entry_px"], h["peak"] * (1 - TRAIL), dry)
             cost = h["shares"] * h["entry_px"]
             val = h["shares"] * h["last_px"]
-            hold_rows.append([LABEL, t, names.get(t, ""), h["entry_date"], round(h["entry_px"], 2), round(h["shares"], 4),
+            hold_rows.append([LABEL, t, (names.get(t, "") + (" " + flag if flag else "")).strip(), h["entry_date"], round(h["entry_px"], 2),
+                              round(h["shares"], 4),
                               round(cost, 2), round(h["last_px"], 2), round(val, 2), round(val - cost, 2), round(r, 2),
-                              round(h["peak"], 2), f"收市 ≤ ${h['peak'] * (1 - TRAIL):,.2f} 就賣（由最高位跌20%，下一個交易日收市）",
+                              round(h["peak"], 2), sell_rule_txt(h, sx),
                               round(h["r12_entry"] * 100, 1) if h.get("r12_entry") is not None else "",
                               round(float(now12) * 100, 1) if np.isfinite(now12) else "", str(today)])
     else:
@@ -276,10 +335,12 @@ def main():
         hh_ = st["hold"][t]
         trade_rows.append([str(today), LABEL, "建議賣出（下一個交易日收市）", t, names.get(t, ""), round(hh_["last_px"], 2),
                            round(hh_["shares"], 4), round(hh_["shares"] * hh_["last_px"], 2),
-                           round((hh_["last_px"] / hh_["entry_px"] - 1) * 100, 2), "", f"已由最高位 ${hh_['peak']:,.2f} 跌 ≥20%"])
+                           round((hh_["last_px"] / hh_["entry_px"] - 1) * 100, 2), "",
+                           "已跌穿200日線或者離52週高位超過30%" if IS_E else f"已由最高位 ${hh_['peak']:,.2f} 跌 ≥20%"])
     if st["pending_sell"]:
         lines.append("🔴 *下一個交易日收市前賣出*：" + "、".join(
-            f"{t}（今日 ${st['hold'][t]['last_px']:,.2f}，已由高位跌 ≥20%）" for t in st["pending_sell"]))
+            f"{t}（今日 ${st['hold'][t]['last_px']:,.2f}，" + ("已跌穿200日線或者離52週高位超過30%" if IS_E else "已由高位跌 ≥20%") + "）"
+            for t in st["pending_sell"]))
     if st["pending_buy"]:
         per = nav / SLOTS
         lines.append("🟢 *下一個交易日收市前買入*（每隻大約 ${:,.0f}）：".format(per))
@@ -287,17 +348,24 @@ def main():
             p = float(last[t])
             g = float(r12[t])
             warn = " ⚠️ 已升超過2倍（歷史上追入風險較高，規則照買）" if g > 2.0 else ""
-            lines.append(f"• {t}（{names.get(t, '')}）過去12個月已升 {g * 100:+.0f}% ｜ 參考價 ${p:,.2f} ｜ 大約 {per / p:.2f} 股{warn}")
+            flag = second_txt(prev_year(px[t].dropna()))
+            ytxt = f"今年升 {st['pending_ytd'][t] * 100:+.0f}% ｜ " if IS_E else ""
+            lines.append(f"• {t}（{names.get(t, '')}）{ytxt}過去12個月已升 {g * 100:+.0f}% ｜ 參考價 ${p:,.2f} ｜ 大約 {per / p:.2f} 股{warn}"
+                         + (f" ｜ {flag}" if flag else ""))
             MM.sheet_row(today, TAG, t, f"建議買入（下一個交易日收市；過去12個月已升{g * 100:+.0f}%）", g * 100, p, None, dry)
             trade_rows.append([str(today), LABEL, "建議買入（下一個交易日收市）", t, names.get(t, ""), round(p, 2),
                                round(per / p, 4), round(per, 2), "", round(g * 100, 1),
-                               "已升超過2倍（歷史上追入風險較高，規則照買）" if g > 2.0 else "倍升股"])
+                               "；".join(x for x in [(f"今年升 {st['pending_ytd'][t] * 100:+.0f}%，近52週高位，喺MA200上面" if IS_E else
+                                                      ("已升超過2倍（歷史上追入風險較高，規則照買）" if g > 2.0 else "倍升股")), flag] if x)])
     if not st["pending_sell"] and not st["pending_buy"]:
         lines.append("⚪ 明日唔使買賣。")
     if gate_txt:
         lines.append(gate_txt)
-    lines += ["", "規則：倍升股（12個月升≥100%）+ 喺MA50同MA200上面先買；由最高位跌20%就賣；揸最多5隻。"
-              + ("（線D2：SPY每日訊號係「現金」嗰陣唔開新倉，用嚟同線D比較）" if SPY_GATE else ""),
+    rule = ("規則：今年升≥30% + 離52週最高位唔夠30% + 喺200日線上面先買（揀今年升最多）；跌穿200日線或者離52週高位超過30%就賣；揸最多5隻。"
+            "（第二十六輪：2015年起回測 +28.7%/年，但 2000-2009 試過跌 -64%）" if IS_E else
+            "規則：倍升股（12個月升≥100%）+ 喺MA50同MA200上面先買；由最高位跌20%就賣；揸最多5隻。"
+            + ("（線D2：SPY每日訊號係「現金」嗰陣唔開新倉，用嚟同線D比較）" if SPY_GATE else ""))
+    lines += ["", rule, "⚠️ 第二次倍升 = 之前一年都已經升 ≥100%，歷史上之後12個月中位數 -14.8%（只係提醒，唔影響買賣）。",
               "_模擬交易，唔係投資建議_"]
     SV.replace_group("現時持倉", SV.HOLD_HEADER, 1, [LABEL], hold_rows, dry)
     SV.upsert("每日總覽", SV.DAILY_HEADER, [[str(today), LABEL, round(nav, 2), round((nav / CAPITAL - 1) * 100, 2), round(dr_, 2),

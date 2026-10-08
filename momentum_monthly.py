@@ -7,6 +7,7 @@ momentum_monthly.py — 動量模擬交易（三條線 + SPY基準，各自獨�
        多週期 = 3個月、6個月、12-1個月三個排名取平均（第九輪C6：驗證期 +16.4%，最大跌幅 -31%）
   線D：倍升股 + 由高位跌20%賣（line_d.py，每日獨立跑同發訊息；月尾成績表會一齊列出）
   線D2：同線D一樣，但 SPY每日訊號 = 現金嗰陣唔開新倉（line_d.py --variant=D2；2026-10-08 開始，由線D當日持倉複製）
+  線E：今年升≥30% + 離52週高位<30% + 喺MA200上面先買；跌穿MA200或離高位>30%就賣（line_d.py --variant=E；2026-10-08 開始，$80,000）
   輪動：美股/納指/海外股/長債/黃金，高過10個月平均先揸，每樣20%（rotation_live.py；2026-10-07 開始）
   比較對象：SPY、QQQ、QQQM（QQQ平價版）、MTUM（動量ETF）——第一次換倉日買入長揸
        （第十二輪發現線A歷史上同QQQ差唔多、回報大部分係動量因子，所以要同QQQ同MTUM比）
@@ -192,7 +193,7 @@ def load_state(today):
         return None
     first = pd.Timestamp(logs["date"].min())
     allt = sorted(set(logs["ticker"]))
-    start_dl = min(first - pd.Timedelta(days=7), pd.Timestamp(today) - pd.Timedelta(days=400))
+    start_dl = min(first - pd.Timedelta(days=7), pd.Timestamp(today) - pd.Timedelta(days=760))   # 夠計「之前一年」升幅
     h = yf.download(allt + list(BENCH), start=start_dl.strftime("%Y-%m-%d"),
                     end=(pd.Timestamp(today) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
                     auto_adjust=True, progress=False)["Close"]
@@ -305,9 +306,15 @@ def daily_status(today, dry, send=True):
                     if len(sr) >= 253:
                         r_in = round(float(sr.iloc[-1] / sr.iloc[-253] - 1) * 100, 1)
                 g_now = f"{r12[t] * 100:+.0f}%" if t in r12 else "—"
+                flag = ""
+                if "h_all" in S and t in S["h_all"].columns:
+                    sa = S["h_all"][t].dropna()
+                    sa = sa[sa.index <= pd.Timestamp(today)]
+                    if len(sa) >= 505 and sa.iloc[-253] / sa.iloc[-505] - 1 >= 1.0:
+                        flag = f"⚠️ 第二次倍升（之前一年 {(sa.iloc[-253] / sa.iloc[-505] - 1) * 100:+.0f}%）"
                 lines.append(f"{k}. {t}（{names.get(t, '')}）買入 ${ep:,.2f} → 今日 ${cp:,.2f} ｜ {sh:.2f} 股 ｜ "
-                             f"{val - alloc:+,.0f}（{(cp / ep - 1) * 100:+.1f}%）｜ 過去12個月 {g_now}")
-                hold_rows.append([f"線{tr}", t, names.get(t, ""), str(ed.date()), round(ep, 2), round(sh, 4), round(alloc, 2),
+                             f"{val - alloc:+,.0f}（{(cp / ep - 1) * 100:+.1f}%）｜ 過去12個月 {g_now}" + (f" ｜ {flag}" if flag else ""))
+                hold_rows.append([f"線{tr}", t, (names.get(t, "") + (" " + flag if flag else "")).strip(), str(ed.date()), round(ep, 2), round(sh, 4), round(alloc, 2),
                                   round(cp, 2), round(val, 2), round(val - alloc, 2), round((cp / ep - 1) * 100, 2), "",
                                   f"冇止損；{nxt} 換倉日跌出頭{cfg['topn']}名就賣（下一個交易日收市）",
                                   r_in, round(r12[t] * 100, 1) if t in r12 else "", str(today)])
@@ -351,7 +358,8 @@ def daily_status(today, dry, send=True):
                            "第一日買入之後唔郁"])
     SV.replace_group("現時持倉", SV.HOLD_HEADER, 1, [f"線{t}" for t in TRACKS] + ["輪動"], hold_rows, dry)
     SV.upsert("每日總覽", SV.DAILY_HEADER, [r + [f"{r[0]}|{r[1]}"] for r in daily_rows], dry)
-    lines += ["", "冇止損，換倉日先換股。線A、線C嘅SPY部分跟「SPY每日訊號」。", "_模擬交易，唔係投資建議_"]
+    lines += ["", "冇止損，換倉日先換股。線A、線C嘅SPY部分跟「SPY每日訊號」。",
+              "⚠️ 第二次倍升 = 之前一年都已經升 ≥100%，歷史上之後12個月中位數 -14.8%（只係提醒，唔影響買賣）。", "_模擬交易，唔係投資建議_"]
     sections.append("\n".join(lines))
     send_sections(head, sections, dry or not send)
     return True
@@ -434,7 +442,7 @@ def monthly_scoreboard(today, dry):
             t = navs[tr]["turn"].copy()
             t.iloc[0] = 0.0          # 第一次買入唔計換手
             series[f"線{tr}"] = (r, t)
-    for tg in ("D", "D2"):                                   # 線D、線D2（line_d.py，每日自己記總值）
+    for tg in ("D", "D2", "E"):                                   # 線D、線D2（line_d.py，每日自己記總值）
         fp = f"paper_log/line{tg}_nav.tsv"
         if not os.path.exists(fp):
             continue
@@ -495,8 +503,9 @@ def monthly_scoreboard(today, dry):
 
     days = stats[next(iter(stats))]["days"]
     lines = [f"🗓️ *每月成績表* {today}（由 {start_day.date()} 開始，{days} 個交易日）", "",
-             "*我哋嘅線*", table(["線A", "線B", "線C", "線D", "線D2"]),
-             "線D2 = 線D + SPY每日訊號「持有」先開新倉（第二十二輪唯一有改善，2026-10-08 開始驗證）", "",
+             "*我哋嘅線*", table(["線A", "線B", "線C", "線D", "線D2", "線E"]),
+             "線D2 = 線D + SPY每日訊號「持有」先開新倉（第二十二輪唯一有改善，2026-10-08 開始驗證）",
+             "線E = 今年升≥30% + 離高位<30% + 喺MA200上面；跌穿MA200或離高位>30%就賣（第二十六輪，2026-10-08 開始）", "",
              "*比較對象*", table(["SPY", "QQQ", "QQQM", "MTUM"]), "",
              "*三個組合（用模擬交易真實數字計，每日固定比例）*", table(["組合甲", "組合乙", "組合丙", "QQQ"]),
              "組合甲 = 70% SPY訊號 + 15% 線A + 15% 線D（回測守得住科網爆煲：2000-2009 最大跌幅 -31%）",

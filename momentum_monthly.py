@@ -40,6 +40,7 @@ import requests
 
 import main as bot
 import momentum_v1 as M
+import prices as PR
 import rotation_live as RL
 import sheet_v2 as SV
 
@@ -196,6 +197,21 @@ def load_state(today):
                     auto_adjust=True, progress=False)["Close"]
     if isinstance(h, pd.Series):
         h = h.to_frame()
+    h.index = pd.DatetimeIndex(h.index).tz_localize(None).normalize()
+    h = h[h.index <= pd.Timestamp(today)]
+    # 逐隻檢查有冇今日收市價（2026-10-08 修正：之前有啲股票用咗前一日價）
+    need = set(BENCH)
+    for tr in TRACKS:
+        lt = logs[logs["track"] == tr]
+        if not lt.empty:
+            need |= set(lt[lt["date"] == lt["date"].max()]["ticker"])
+    h, miss = PR.ensure_fresh(h, sorted(need), today)
+    if "SPY" in miss:
+        print(f"{today} 未有收市數據（可能休市，或者 Yahoo 未更新）。")
+        return None
+    if miss and not PR.last_chance():
+        print(f"{today} 收市價未齊（{miss}），今次唔出報告，等後備時間再跑。")
+        return None
     h_all = h
     h = h[h.index > first]
     if h.empty or h.index[-1].date() != today:
@@ -218,13 +234,17 @@ def load_state(today):
         if len(sr) >= 253:
             r12[t] = float(sr.iloc[-1] / sr.iloc[-253] - 1)
     return {"logs": logs, "h": h, "navs": navs, "start_day": start_day, "bench": bench_navs, "spy_hold": spy_hold_eff,
-            "r12": r12, "h_all": h_all}
+            "r12": r12, "h_all": h_all, "stale": miss}
 
 
 def rotation_state(today):
     """輪動（rotation_live.py）：下載5個ETF、由開始日計到今日。出錯唔影響其他線。"""
     try:
         px = RL.download(today)
+        px, miss = PR.ensure_fresh(px, list(RL.ASSETS), today, rounds=2)
+        if miss:
+            print(f"輪動：{miss} 未有 {today} 收市價，今日唔計。")
+            return None
         return RL.simulate(px, get_rf(px.index), today, is_last_trading_day(today), CAPITAL)
     except Exception as e:
         print(f"輪動計唔到：{e}")
@@ -240,7 +260,7 @@ def summary(nv):
 def daily_status(today, dry, send=True):
     S = load_state(today)
     if S is None:
-        return
+        return False
     logs, h, navs, start_day = S["logs"], S["h"], S["navs"], S["start_day"]
     r12 = S.get("r12", {})
     names = safe_names()
@@ -248,6 +268,8 @@ def daily_status(today, dry, send=True):
     spy_now = S.get("spy_hold", {}).get(h.index[-1], 0.0) > 0
     sections = []
     head = f"📊 *動量模擬交易* {today}（由 {start_day.date()} 開始，每條線 ${CAPITAL:,.0f}）"
+    if S.get("stale"):
+        head += f"\n⚠️ 以下股票到最後都未有 {today} 收市價，用緊上一日價：{'、'.join(S['stale'])}"
     for tr, cfg in TRACKS.items():
         if tr not in navs:
             continue
@@ -331,6 +353,7 @@ def daily_status(today, dry, send=True):
     lines += ["", "冇止損，換倉日先換股。線A、線C嘅SPY部分跟「SPY每日訊號」。", "_模擬交易，唔係投資建議_"]
     sections.append("\n".join(lines))
     send_sections(head, sections, dry or not send)
+    return True
 
 
 def send_sections(head, sections, dry, limit=3800):
@@ -502,7 +525,11 @@ def monthly_scoreboard(today, dry):
 # ---------------- 換倉 ----------------
 def main():
     force, dry = "--force" in sys.argv, "--dry" in sys.argv
-    today = datetime.now(ZoneInfo("America/New_York")).date()
+    today = PR.market_day()                 # 最近一個已收市交易日（排程遲咗過半夜都計返啱嗰日）
+    done_path = "paper_log/mm_done.txt"     # 排程每晚有後備時間：做咗就唔再做，避免重複發訊息
+    if "--scheduled" in sys.argv and os.path.exists(done_path) and open(done_path).read().strip() == str(today):
+        print(f"{today} 已經做咗，唔再跑。")
+        return
     if "--sheet-only" in sys.argv:          # 只寫 Google Sheet（唔發 Telegram、唔換倉），日期 = 最近一個交易日
         d = [a.split("=")[1] for a in sys.argv if a.startswith("--date=") and len(a) > 7]
         day = pd.Timestamp(d[0]).date() if d else today
@@ -523,14 +550,13 @@ def main():
     only = [a.split("=")[1] for a in sys.argv if a.startswith("--tracks=")]
     if only:
         due = [t for t in due if t in only[0].split(",")]
-    if not due:
-        daily_status(today, dry)
-        if want_board:
-            monthly_scoreboard(today, dry)
-        return
-    rebalance(today, due, force, dry)
-    if want_board:
+    ok = daily_status(today, dry) if not due else rebalance(today, due, force, dry)
+    if ok and want_board:
         monthly_scoreboard(today, dry)
+    if ok and not dry:
+        os.makedirs("paper_log", exist_ok=True)
+        with open(done_path, "w") as f:
+            f.write(str(today))
 
 
 def rebalance(today, due, force, dry):
@@ -538,14 +564,23 @@ def rebalance(today, due, force, dry):
     closes = M.download_close(tickers, (pd.Timestamp(today) - pd.Timedelta(days=500)).strftime("%Y-%m-%d"),
                               (pd.Timestamp(today) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
     px = pd.DataFrame(closes).sort_index()
-    px = px[px.index.dayofweek < 5]
-    last_day = px.index[-1].date()
-    if not force and last_day != today:
-        msg = f"ℹ️ 動量模擬：今日（{today}）未有收市數據，可能休市，下個交易日再試。"
-        print(msg)
-        if not dry:
-            bot.send_telegram(msg)
-        return
+    px = px[(px.index.dayofweek < 5) & (px.index <= pd.Timestamp(today))]
+    # 逐隻檢查有冇今日收市價（2026-10-08 修正）
+    uni = [t for t in tickers if t in px.columns]
+    px, miss = PR.ensure_fresh(px, uni, today, rounds=2)
+    if len(miss) > 0.5 * max(len(uni), 1):
+        print(f"ℹ️ 動量模擬：{today} 未有收市數據（可能休市，或者 Yahoo 未更新），遲啲再試。")
+        return False
+    if len(miss) > 0.02 * len(uni) and not PR.last_chance():
+        print(f"動量模擬：{today} 仲有 {len(miss)} 隻未有收市價，等後備時間再跑。")
+        return False
+    stale_note = ""
+    if miss:                                   # 少數仲未有：排名用返上一日價，並標明
+        prev = px[px.index < pd.Timestamp(today)].ffill().iloc[-1]
+        for t in miss:
+            px.loc[pd.Timestamp(today), t] = prev.get(t, np.nan)
+        stale_note = f"⚠️ {len(miss)} 隻未有今日收市價，排名用咗上一日價：{'、'.join(miss[:15])}"
+    last_day = today
     i = len(px) - 1
     sc = scores_at(px, i)
     df = bot.replay(bot.add_signals(bot.load_data()))
@@ -553,7 +588,7 @@ def rebalance(today, due, force, dry):
     logs = read_logs()
     logs = logs[logs["date"] < str(last_day)]
 
-    lines = [f"📅 *動量換倉（模擬交易）* {last_day}", f"每條線模擬本金 ${CAPITAL:,.0f}", ""]
+    lines = [f"📅 *動量換倉（模擬交易）* {last_day}", f"每條線模擬本金 ${CAPITAL:,.0f}"] + ([stale_note] if stale_note else []) + [""]
     rows = []
     trade_rows = []
 
@@ -624,6 +659,7 @@ def rebalance(today, due, force, dry):
     SV.upsert("買賣紀錄", SV.TRADE_HEADER, [r + [f"{r[0]}|{r[1]}|{r[3]}|{r[2]}"] for r in trade_rows], dry)
     if not dry:
         bot.send_telegram(text)
+    return True
 
 
 if __name__ == "__main__":

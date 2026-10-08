@@ -25,7 +25,8 @@ def download(today):
     h = yf.download(list(ASSETS), start=(pd.Timestamp(today) - pd.Timedelta(days=430)).strftime("%Y-%m-%d"),
                     end=(pd.Timestamp(today) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
                     auto_adjust=True, progress=False)["Close"]
-    return h[list(ASSETS)].ffill()
+    h.index = pd.DatetimeIndex(h.index).tz_localize(None).normalize()
+    return h[list(ASSETS)]                 # 唔好喺度 ffill：要先檢查每隻有冇今日價（prices.ensure_fresh）
 
 
 def month_ends(idx, today, today_is_month_end):
@@ -53,7 +54,7 @@ def check(px, me, d):
 
 
 def simulate(px, rf, today, today_is_month_end, capital):
-    px = px[px.index <= pd.Timestamp(today)]
+    px = px[px.index <= pd.Timestamp(today)].ffill()
     days = px.index[px.index >= START]
     if len(days) == 0:
         return None

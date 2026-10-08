@@ -8,20 +8,23 @@ snapshot_estimates.py — 每月尾記低標普500每隻股票「分析師EPS預
 存：paper_log/estimates_YYYY-MM-DD.tsv（paper-trading 分支）。
 只係月尾最後一個平日先跑（或者 --force）。唔會影響模擬交易。
 """
+import os
 import sys
 import time
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 import momentum_monthly as MM
+import prices as PR
 
 
 def main():
-    today = datetime.now(ZoneInfo("America/New_York")).date()
+    today = PR.market_day()
     if "--force" not in sys.argv and not MM.is_last_trading_day(today):
         print(f"{today} 唔係月尾，唔記分析師預測。")
+        return
+    if "--force" not in sys.argv and os.path.exists(f"paper_log/estimates_{today}.tsv"):
+        print(f"{today} 已經記咗。")
         return
     import yfinance as yf
     tickers, _ = MM.current_sp500()

@@ -3,7 +3,10 @@ name: Monthly Momentum (paper trading)
 on:
   schedule:
     # 星期一至五 UTC 21:45（美股收市後）；程式自己判斷係咪換倉日 / 月尾（月尾仲會出每月成績表）
+    # 後備：UTC 00:30、03:15（2026-10-08 加：Yahoo 有時收市後幾個鐘仲未有部分股票當日收市價；做咗就唔會再做）
     - cron: '45 21 * * 1-5'
+    - cron: '30 0 * * 2-6'
+    - cron: '15 3 * * 2-6'
   workflow_dispatch:
     inputs:
       force:
@@ -29,6 +32,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: paper-trading
+  cancel-in-progress: false
 
 jobs:
   momentum:
@@ -57,6 +64,7 @@ jobs:
           PAPER_CAPITAL: "80000"
         run: |
           ARGS=""
+          if [ "${{ github.event_name }}" = "schedule" ]; then ARGS="--scheduled"; fi
           if [ "${{ inputs.force }}" = "yes" ]; then ARGS="--force"; fi
           if [ -n "${{ inputs.tracks }}" ]; then ARGS="$ARGS --tracks=${{ inputs.tracks }}"; fi
           if [ "${{ inputs.scoreboard }}" = "yes" ]; then ARGS="$ARGS --scoreboard"; fi

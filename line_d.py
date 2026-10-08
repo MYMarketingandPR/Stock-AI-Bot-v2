@@ -18,15 +18,13 @@ line_d.py — 模擬交易「線D」：倍升股輪換 + 由最高位跌20%賣�
 import json
 import os
 import sys
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
 import numpy as np
 import pandas as pd
 
 import main as bot
 import momentum_monthly as MM
 import momentum_v1 as M
+import prices as PR
 import sheet_v2 as SV
 
 M.PROGRESS = "/tmp/line_d_progress.txt"
@@ -86,6 +84,12 @@ def sheet_only(dry):
         g = st.get("pending_r12", {}).get(t, r12.get(t))
         rows.append([day, "線D", "建議買入（下一個交易日收市）", t, names.get(t, ""), round(p, 2), round(per / p, 4), round(per, 2), "",
                      round(g * 100, 1) if g is not None else "", "已升超過2倍（歷史上追入風險較高，規則照買）" if g and g > 2 else "倍升股"])
+    if os.path.exists(TRADES):                    # 已執行嘅買賣：由紀錄檔重寫（價錢有改正都會更新）
+        tr = pd.read_csv(TRADES, sep="\t")
+        for _, x in tr.iterrows():
+            act = "已買入" if x["action"] == "買入" else "已賣出"
+            rows.append([x["date"], "線D", act, x["ticker"], names.get(x["ticker"], ""), x["price"], x["shares"], x["value"],
+                         x["return_pct"] if pd.notna(x["return_pct"]) else "", "", x["reason"]])
     SV.upsert("買賣紀錄", SV.TRADE_HEADER, [r + [f"{r[0]}|{r[1]}|{r[3]}|{r[2]}"] for r in rows], dry)
     SV.upsert("每日總覽", SV.DAILY_HEADER, [[day, "線D", round(nav, 2), round((nav / CAPITAL - 1) * 100, 2), "", "",
                                           round(st["cash"], 2), len(st["hold"]),
@@ -97,7 +101,7 @@ def main():
     if "--sheet-only" in sys.argv:
         sheet_only(dry)
         return
-    today = datetime.now(ZoneInfo("America/New_York")).date()
+    today = PR.market_day()               # 最近一個已收市交易日（排程遲咗過半夜都啱）
     st = load_state()
     if st.get("last_date") == str(today):
         print("線D：今日已經跑過。")
@@ -109,9 +113,21 @@ def main():
                               (pd.Timestamp(today) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
     px = pd.DataFrame(closes).sort_index()
     px = px[px.index.dayofweek < 5]
-    if px.empty or px.index[-1].date() != today:
-        print(f"線D：{today} 未有收市數據，可能休市。")
+    # 逐隻檢查有冇今日收市價（2026-10-08 修正：之前有啲股票用咗前一日價）
+    final = PR.last_chance()
+    critical = sorted(set(held) | set(st["pending_buy"]) | set(st["pending_sell"]) | {"QQQ"})
+    px, miss_c = PR.ensure_fresh(px, critical, today)
+    if "QQQ" in miss_c:
+        print(f"線D：{today} 未有收市數據（可能休市，或者 Yahoo 未更新），遲啲再試。")
         return
+    uni_all = [t for t in tickers if t in px.columns]
+    px, miss_u = PR.ensure_fresh(px, uni_all, today, rounds=2)
+    too_many = len(miss_u) > 0.02 * max(len(uni_all), 1)
+    if (miss_c or too_many) and not final:
+        print(f"線D：{today} 收市價未齊（持倉/待執行 {miss_c}；股票池 {len(miss_u)} 隻），今次唔做，等後備時間再跑。")
+        return
+    stale = set(miss_c)
+    px = px[px.index <= pd.Timestamp(today)]
     last = px.iloc[-1]
     enough = px.notna().sum() >= 253
     r12_all = (px.iloc[-1] / px.iloc[-253] - 1).where(enough)          # 過去12個月升幅（252個交易日）
@@ -120,21 +136,27 @@ def main():
         return "—" if v is None or not np.isfinite(v) else f"{v * 100:+.0f}%"
 
     def price(t):
+        """只回傳今日收市價；未有就 None（唔會再靜靜雞用前一日價）。"""
         if t in px.columns:
-            s = px[t].dropna()
-            if len(s):
-                return float(s.iloc[-1])
+            v = px[t].get(pd.Timestamp(today), np.nan)
+            if np.isfinite(v):
+                return float(v)
         return None
 
     lines = [f"🅳 *線D：倍升股 + 由高位跌20%賣*（模擬本金 ${CAPITAL:,.0f}）{today}", ""]
     traded = 0.0
     trade_rows = []
+    if stale:
+        lines.append(f"⚠️ 以下股票到最後都未有 {today} 收市價，今日唔郁佢哋（價錢用返上一次）：{'、'.join(sorted(stale))}")
+    carry_sell = []
     # 1) 執行昨日決定（今日收市價）
     for t in st["pending_sell"]:
         if t in st["hold"]:
             p = price(t)
+            if not p:
+                carry_sell.append(t)          # 未有今日價：留到下一個交易日先賣
+                continue
             h = st["hold"].pop(t)
-            p = p if p else h["last_px"]
             v = h["shares"] * p
             traded += v
             st["cash"] += v * (1 - COST)
@@ -170,7 +192,7 @@ def main():
                            round(r_in * 100, 1) if r_in is not None else "", f"賣出線 ${p * (1 - TRAIL):,.2f}（之後跟最高價 × 0.8 上移）"])
         MM.sheet_row(today, "D", t, f"已買入（過去12個月已升{r12txt(r_in)}）",
                      r_in * 100 if r_in is not None else None, p, p * (1 - TRAIL), dry)
-    st["pending_sell"], st["pending_buy"], st["pending_r12"] = [], [], {}
+    st["pending_sell"], st["pending_buy"], st["pending_r12"] = list(carry_sell), [], {}
     if st["start"] is None:
         st["start"] = str(today)
     # 2) 更新持倉、最高價
@@ -183,7 +205,7 @@ def main():
     append_tsv(NAV, {"date": str(today), "nav": round(nav, 2), "turn": round(traded / nav, 4) if nav > 0 else 0})
     # 3) 今日收市決定
     for t, h in st["hold"].items():
-        if h["last_px"] <= h["peak"] * (1 - TRAIL):
+        if t not in st["pending_sell"] and price(t) and h["last_px"] <= h["peak"] * (1 - TRAIL):
             st["pending_sell"].append(t)
     free = SLOTS - (len(st["hold"]) - len(st["pending_sell"]))
     cands = []

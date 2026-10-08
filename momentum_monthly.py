@@ -6,6 +6,7 @@ momentum_monthly.py — 動量模擬交易（三條線 + SPY基準，各自獨�
   線C：70% 多週期動量前10隻 + 30% SPY訊號方案，每半個月換
        多週期 = 3個月、6個月、12-1個月三個排名取平均（第九輪C6：驗證期 +16.4%，最大跌幅 -31%）
   線D：倍升股 + 由高位跌20%賣（line_d.py，每日獨立跑同發訊息；月尾成績表會一齊列出）
+  線D2：同線D一樣，但 SPY每日訊號 = 現金嗰陣唔開新倉（line_d.py --variant=D2；2026-10-08 開始，由線D當日持倉複製）
   輪動：美股/納指/海外股/長債/黃金，高過10個月平均先揸，每樣20%（rotation_live.py；2026-10-07 開始）
   比較對象：SPY、QQQ、QQQM（QQQ平價版）、MTUM（動量ETF）——第一次換倉日買入長揸
        （第十二輪發現線A歷史上同QQQ差唔多、回報大部分係動量因子，所以要同QQQ同MTUM比）
@@ -433,13 +434,16 @@ def monthly_scoreboard(today, dry):
             t = navs[tr]["turn"].copy()
             t.iloc[0] = 0.0          # 第一次買入唔計換手
             series[f"線{tr}"] = (r, t)
-    if os.path.exists("paper_log/lineD_nav.tsv"):           # 線D（line_d.py，每日自己記總值）
-        dn = pd.read_csv("paper_log/lineD_nav.tsv", sep="\t", parse_dates=["date"]).drop_duplicates("date", keep="last")
+    for tg in ("D", "D2"):                                   # 線D、線D2（line_d.py，每日自己記總值）
+        fp = f"paper_log/line{tg}_nav.tsv"
+        if not os.path.exists(fp):
+            continue
+        dn = pd.read_csv(fp, sep="\t", parse_dates=["date"]).drop_duplicates("date", keep="last")
         dn = dn[dn["date"] <= pd.Timestamp(today)].set_index("date")
         if len(dn) >= 2:
             r = dn["nav"].pct_change()
             r.iloc[0] = dn["nav"].iloc[0] / CAPITAL - 1
-            series["線D"] = (r, dn["turn"].astype(float))
+            series[f"線{tg}"] = (r, dn["turn"].astype(float))
     R = rotation_state(today)                               # 輪動（rotation_live.py）
     if R is not None and len(R["nav"]) >= 1:
         nv = R["nav"]
@@ -491,7 +495,8 @@ def monthly_scoreboard(today, dry):
 
     days = stats[next(iter(stats))]["days"]
     lines = [f"🗓️ *每月成績表* {today}（由 {start_day.date()} 開始，{days} 個交易日）", "",
-             "*我哋嘅線*", table(["線A", "線B", "線C", "線D"]), "",
+             "*我哋嘅線*", table(["線A", "線B", "線C", "線D", "線D2"]),
+             "線D2 = 線D + SPY每日訊號「持有」先開新倉（第二十二輪唯一有改善，2026-10-08 開始驗證）", "",
              "*比較對象*", table(["SPY", "QQQ", "QQQM", "MTUM"]), "",
              "*三個組合（用模擬交易真實數字計，每日固定比例）*", table(["組合甲", "組合乙", "組合丙", "QQQ"]),
              "組合甲 = 70% SPY訊號 + 15% 線A + 15% 線D（回測守得住科網爆煲：2000-2009 最大跌幅 -31%）",

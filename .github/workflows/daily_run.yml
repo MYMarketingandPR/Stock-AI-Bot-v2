@@ -1,9 +1,7 @@
 name: Daily SPY Signal
 
 on:
-  schedule:
-    # 星期一至五 UTC 21:30 = 美股收市後（夏令時間 17:30 ET；冬令時間 16:30 ET），全年都係收市後先跑
-    - cron: '30 21 * * 1-5'
+  # 2026-10-09：每日排程已經搬去 monthly_momentum.yml（有後備時間、檢查當日收市價、防重複），呢度只保留手動執行。
   workflow_dispatch: # 保留手動執行按鈕
 
 jobs:

@@ -56,6 +56,15 @@ jobs:
         run: |
           git fetch origin paper-trading && git checkout origin/paper-trading -- paper_log || echo "未有紀錄"
 
+      - name: SPY每日訊號（main.py；2026-10-09 由 daily_run 搬過嚟，有後備時間同防重複）
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then python -u main.py --scheduled; else echo "手動執行：唔發SPY訊號"; fi
+
       - name: 計每月動量
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

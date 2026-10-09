@@ -189,8 +189,27 @@ def log_to_google_sheet(date, state, vix, close, line):
 
 def main(df=None):
     dry = "--dry" in sys.argv
+    import time
+    import prices as PR
+    today_ny = PR.market_day()            # 最近一個已收市交易日（排程遲咗過半夜都計返啱嗰日）
+    guard = "paper_log/spy_done.txt"      # 每晚有後備時間再跑：發咗就唔再發
+    scheduled = "--scheduled" in sys.argv
+    if scheduled and os.path.exists(guard) and open(guard).read().strip() == str(today_ny):
+        print(f"{today_ny} SPY訊號已經發咗。")
+        return
     if df is None:
         df = load_data()
+        # 2026-10-09 修正：Yahoo 收市後幾個鐘有時仲未有當日 SPY 價 → 等5分鐘再試，最多3次；仲未有就等後備時間
+        if "--date" not in sys.argv:
+            for _ in range(3):
+                if df.index[-1].date() >= today_ny:
+                    break
+                print(f"未有 {today_ny} SPY 收市價，等5分鐘再試")
+                time.sleep(300)
+                df = load_data()
+            if df.index[-1].date() < today_ny and not PR.last_chance():
+                print(f"仲未有 {today_ny} SPY 收市價，今次唔發，等後備時間再跑。")
+                return
     df = replay(add_signals(df))
 
     if "--date" in sys.argv:
@@ -199,7 +218,6 @@ def main(df=None):
     else:
         i = len(df) - 1
     text, state, sell_line, buy_line = build_message(df, i)
-    today_ny = datetime.now(ZoneInfo("America/New_York")).date()
     if "--date" not in sys.argv and df.index[i].date() != today_ny:
         text = (f"ℹ️ 今日（{today_ny}）未有新收市數據（可能係休市），"
                 f"以下係最後交易日 {df.index[i].date()} 嘅訊號：\n\n") + text
@@ -209,6 +227,10 @@ def main(df=None):
         row = df.iloc[i]
         log_to_google_sheet(df.index[i].date(), state, row["vix"], row["raw"],
                             sell_line if state != "out" else buy_line)
+        if scheduled:
+            os.makedirs("paper_log", exist_ok=True)
+            with open(guard, "w") as f:
+                f.write(str(today_ny))
 
 
 if __name__ == "__main__":

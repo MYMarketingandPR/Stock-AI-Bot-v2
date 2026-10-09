@@ -1,26 +1,24 @@
-"""check_prices.py — 核對Yahoo收市價（2026-10-08 Esther 發現 Telegram 用咗前一日收市價）。"""
-import io
+"""check_prices.py — 核對 2026-10-08 收市價，同重做線E揀股（全部數據齊）。"""
 import pandas as pd
-import requests
 import yfinance as yf
+import momentum_monthly as MM
+import momentum_v1 as M
 
-T = ["MRNA", "SNDK", "LITE", "MU", "DELL", "SPY", "QQQ", "EFA", "TLT", "GLD"]
 out = []
-for t in T:
-    h = yf.Ticker(t).history(start="2026-10-01", end="2026-10-09", auto_adjust=True)
-    out.append(f"{t} history: " + " | ".join(f"{d.date()} {c:.2f}" for d, c in h["Close"].items()))
-    try:
-        fi = yf.Ticker(t).fast_info
-        out.append(f"   fast_info last_price {fi['last_price']:.2f} previous_close {fi['previous_close']:.2f}")
-    except Exception as e:
-        out.append(f"   fast_info 出錯 {e}")
-    try:
-        r = requests.get(f"https://stooq.com/q/d/l/?s={t.lower()}.us&i=d", timeout=20)
-        s = pd.read_csv(io.StringIO(r.text)).tail(4)
-        out.append("   stooq: " + " | ".join(f"{a} {b:.2f}" for a, b in zip(s["Date"], s["Close"])))
-    except Exception as e:
-        out.append(f"   stooq 出錯 {e}")
-d = yf.download(T, start="2026-10-01", end="2026-10-09", auto_adjust=True, progress=False)["Close"]
-out.append("download batch:\n" + d.round(2).to_string())
+T = ["SPY", "SNDK", "MRNA", "LITE", "MU", "DELL", "MRVL", "BE"]
+d = yf.download(T, start="2026-10-05", end="2026-10-10", auto_adjust=True, progress=False)["Close"]
+out.append(d.round(2).to_string())
+tickers, names = MM.current_sp500()
+cl = M.download_close(tickers, "2024-09-01", "2026-10-09")
+px = pd.DataFrame(cl).sort_index()
+px = px[px.index <= "2026-10-08"]
+last = px.iloc[-1]
+ye = px[px.index.year < 2026].ffill().iloc[-1]
+ytd = last / ye - 1
+hi = px.iloc[-252:].max()
+ma200 = px.iloc[-200:].mean()
+sel = ytd[(ytd >= 0.3) & (last >= hi * 0.7) & (last > ma200)].sort_values(ascending=False)
+out.append(f"最後一日：{px.index[-1].date()}；10-08 冇價嘅股票：{list(px.columns[px.iloc[-1].isna()])[:30]}")
+out.append("線E 頭10名（全部數據）：" + "、".join(f"{t} {v * 100:+.0f}%" for t, v in sel.head(10).items()))
 open("check_prices.txt", "w").write("\n".join(out))
 print("\n".join(out))

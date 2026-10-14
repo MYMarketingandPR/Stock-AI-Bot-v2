@@ -67,13 +67,13 @@ def e_levels(s):
     return (float(s.iloc[-200:].mean()) if len(s) >= 200 else None, float(s.iloc[-252:].max()) * 0.7 if len(s) >= 200 else None)
 
 
-def recent_high(t, day, n=20):
-    """近期高位（只係顯示，唔影響買賣）：最近 n 個交易日（約一個月）嘅市中最高價，同埋係邊日。
+def recent_high(t, day, n=42):
+    """近期高位（只係顯示，唔影響買賣）：最近 n 個交易日（約兩個月，2026-10-14 用戶要求由一個月改做兩個月）嘅市中最高價，同埋係邊日。
     用未調整價（同券商App睇到嘅一樣）。攞唔到就回傳 (None, None)。"""
     try:
         import yfinance as yf
         d = pd.Timestamp(day)
-        h = yf.Ticker(t).history(start=(d - pd.Timedelta(days=45)).strftime("%Y-%m-%d"),
+        h = yf.Ticker(t).history(start=(d - pd.Timedelta(days=75)).strftime("%Y-%m-%d"),
                                  end=(d + pd.Timedelta(days=1)).strftime("%Y-%m-%d"), auto_adjust=False)
         hi = h["High"].astype(float).dropna()
         hi.index = pd.DatetimeIndex(hi.index).tz_localize(None).normalize()
@@ -333,7 +333,7 @@ def main():
             else:
                 sl = f"賣出線 ${h['peak'] * (1 - TRAIL):,.2f}（買入後最高收市 ${h['peak']:,.2f} × 0.8）"
             rh, rd = recent_high(t, today)
-            rh_txt = (f"近期高位 ${rh:,.2f}（{rd} 市中最高，今日 {(h['last_px'] / rh - 1) * 100:+.1f}%）｜ "
+            rh_txt = (f"近2個月高位 ${rh:,.2f}（{rd} 市中最高，今日 {(h['last_px'] / rh - 1) * 100:+.1f}%）｜ "
                       if rh else "")
             hi52 = float(sx.iloc[-252:].max()) if len(sx) else None
             hi52_txt = (f"52週最高收市 ${hi52:,.2f}（今日 {(h['last_px'] / hi52 - 1) * 100:+.1f}%）｜ "

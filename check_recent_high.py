@@ -1,8 +1,8 @@
-"""一次性檢查：line_d.recent_high 攞到嘅近期高位（MRVL 應該係 10-06 市中 $301.20 左右）。"""
+"""一次性檢查：line_d.recent_high 近期高位。比較 1 個月（20日）同 2 個月（42日，現用預設）。"""
+import inspect
 import line_d as L
-out = []
+out = [f"預設日數 n = {inspect.signature(L.recent_high).parameters['n'].default}"]
 for t in ["MRVL", "MU", "MRNA", "DELL", "BE", "SNDK", "LITE"]:
-    for d in ["2026-10-13", "2026-10-14"]:
-        out.append(f"{t}\t{d}\t{L.recent_high(t, d)}")
+    out.append(f"{t}\t20日 {L.recent_high(t, '2026-10-14', 20)}\t預設 {L.recent_high(t, '2026-10-14')}")
 open("recent_high_check.txt", "w").write("\n".join(out) + "\n")
 print("\n".join(out))

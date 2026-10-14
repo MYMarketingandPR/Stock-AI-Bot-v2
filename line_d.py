@@ -67,6 +67,25 @@ def e_levels(s):
     return (float(s.iloc[-200:].mean()) if len(s) >= 200 else None, float(s.iloc[-252:].max()) * 0.7 if len(s) >= 200 else None)
 
 
+def recent_high(t, day, n=20):
+    """近期高位（只係顯示，唔影響買賣）：最近 n 個交易日（約一個月）嘅市中最高價，同埋係邊日。
+    用未調整價（同券商App睇到嘅一樣）。攞唔到就回傳 (None, None)。"""
+    try:
+        import yfinance as yf
+        d = pd.Timestamp(day)
+        h = yf.Ticker(t).history(start=(d - pd.Timedelta(days=45)).strftime("%Y-%m-%d"),
+                                 end=(d + pd.Timedelta(days=1)).strftime("%Y-%m-%d"), auto_adjust=False)
+        hi = h["High"].astype(float).dropna()
+        hi.index = pd.DatetimeIndex(hi.index).tz_localize(None).normalize()
+        hi = hi[hi.index <= d].iloc[-n:]
+        if hi.empty:
+            return None, None
+        return float(hi.max()), hi.idxmax().strftime("%m-%d")
+    except Exception as e:
+        print(f"{t} 近期高位攞唔到：{e}")
+        return None, None
+
+
 def sell_rule_txt(h, s):
     if not IS_E:
         return f"收市 ≤ ${h['peak'] * (1 - TRAIL):,.2f} 就賣（由最高位跌20%，下一個交易日收市）"
@@ -302,10 +321,9 @@ def main():
     hold_rows = []
     lines.append("")
     if st["hold"]:
-        lines.append("*持倉*（" + ("賣出線 = 200日線同52週最高位×0.7 邊個高用邊個" if IS_E else "止賺/止蝕線 = 最高價 × 0.8") + "）")
+        lines.append("*持倉*（" + ("賣出線 = 200日線同52週最高位×0.7 邊個高用邊個" if IS_E else "止賺/止蝕線 = 買入後最高收市 × 0.8") + "）")
         for t, h in st["hold"].items():
             r = (h["last_px"] / h["entry_px"] - 1) * 100
-            off = (h["last_px"] / h["peak"] - 1) * 100
             now12 = r12_all.get(t, np.nan)
             sx = px[t].dropna() if t in px.columns else pd.Series(dtype=float)
             flag = second_txt(prev_year(sx))
@@ -313,12 +331,15 @@ def main():
                 m, k = e_levels(sx)
                 sl = f"賣出線 ${max(m, k):,.2f}（200日線 ${m:,.2f}／高位×0.7 ${k:,.2f}）" if m is not None else "賣出線 —"
             else:
-                sl = f"賣出線 ${h['peak'] * (1 - TRAIL):,.2f}"
+                sl = f"賣出線 ${h['peak'] * (1 - TRAIL):,.2f}（買入後最高收市 ${h['peak']:,.2f} × 0.8）"
+            rh, rd = recent_high(t, today)
+            rh_txt = (f"近期高位 ${rh:,.2f}（{rd} 市中最高，今日 {(h['last_px'] / rh - 1) * 100:+.1f}%）｜ "
+                      if rh else "")
             hi52 = float(sx.iloc[-252:].max()) if len(sx) else None
             hi52_txt = (f"52週最高收市 ${hi52:,.2f}（今日 {(h['last_px'] / hi52 - 1) * 100:+.1f}%）｜ "
                         if hi52 else "")
-            lines.append(f"• {t}（{names.get(t, '')}）{r:+.1f}% ｜ 今日 ${h['last_px']:,.2f} ｜ 買入後最高收市 ${h['peak']:,.2f}"
-                         f"（今日 {off:+.1f}%）｜ {hi52_txt}{sl} ｜ "
+            lines.append(f"• {t}（{names.get(t, '')}）{r:+.1f}% ｜ 今日 ${h['last_px']:,.2f} ｜ "
+                         f"{rh_txt}{hi52_txt}{sl} ｜ "
                          f"買入時12個月 {r12txt(h.get('r12_entry'))}、而家12個月 {r12txt(now12)}" + (f" ｜ {flag}" if flag else ""))
             MM.sheet_row(today, TAG, t, f"持倉（買入時12個月{r12txt(h.get('r12_entry'))}，而家{r12txt(now12)}）",
                          r, h["entry_px"], h["peak"] * (1 - TRAIL), dry)

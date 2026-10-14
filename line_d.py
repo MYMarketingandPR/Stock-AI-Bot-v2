@@ -206,7 +206,7 @@ def main():
             lines.append(f"✅ 已賣出 {t} @ ${p:,.2f}（今次 {ret:+.1f}%）")
             trade_rows.append([str(today), LABEL, "已賣出", t, names.get(t, ""), round(p, 2), round(h["shares"], 4), round(v, 2),
                                round(ret, 2), round(float(r12_all.get(t, np.nan)) * 100, 1) if np.isfinite(r12_all.get(t, np.nan)) else "",
-                               ("跌穿200日線或者離52週高位超過30%" if IS_E else f"由最高位 ${h['peak']:,.2f} 跌 ≥20%")
+                               ("跌穿200日線或者離52週高位超過30%" if IS_E else f"由買入後最高收市 ${h['peak']:,.2f} 跌 ≥20%")
                                + f"（買入日 {h['entry_date']}，買入價 ${h['entry_px']:,.2f}）"])
             MM.sheet_row(today, TAG, t, "已賣出", ret, p, h["peak"], dry)
     total = st["cash"] + sum(h["shares"] * (price(t) or h["last_px"]) for t, h in st["hold"].items())
@@ -314,8 +314,11 @@ def main():
                 sl = f"賣出線 ${max(m, k):,.2f}（200日線 ${m:,.2f}／高位×0.7 ${k:,.2f}）" if m is not None else "賣出線 —"
             else:
                 sl = f"賣出線 ${h['peak'] * (1 - TRAIL):,.2f}"
-            lines.append(f"• {t}（{names.get(t, '')}）{r:+.1f}% ｜ 今日 ${h['last_px']:,.2f} ｜ 最高 ${h['peak']:,.2f}"
-                         f"（離高位 {off:.1f}%）｜ {sl} ｜ "
+            hi52 = float(sx.iloc[-252:].max()) if len(sx) else None
+            hi52_txt = (f"52週最高收市 ${hi52:,.2f}（今日 {(h['last_px'] / hi52 - 1) * 100:+.1f}%）｜ "
+                        if hi52 else "")
+            lines.append(f"• {t}（{names.get(t, '')}）{r:+.1f}% ｜ 今日 ${h['last_px']:,.2f} ｜ 買入後最高收市 ${h['peak']:,.2f}"
+                         f"（今日 {off:+.1f}%）｜ {hi52_txt}{sl} ｜ "
                          f"買入時12個月 {r12txt(h.get('r12_entry'))}、而家12個月 {r12txt(now12)}" + (f" ｜ {flag}" if flag else ""))
             MM.sheet_row(today, TAG, t, f"持倉（買入時12個月{r12txt(h.get('r12_entry'))}，而家{r12txt(now12)}）",
                          r, h["entry_px"], h["peak"] * (1 - TRAIL), dry)
@@ -336,7 +339,7 @@ def main():
         trade_rows.append([str(today), LABEL, "建議賣出（下一個交易日收市）", t, names.get(t, ""), round(hh_["last_px"], 2),
                            round(hh_["shares"], 4), round(hh_["shares"] * hh_["last_px"], 2),
                            round((hh_["last_px"] / hh_["entry_px"] - 1) * 100, 2), "",
-                           "已跌穿200日線或者離52週高位超過30%" if IS_E else f"已由最高位 ${hh_['peak']:,.2f} 跌 ≥20%"])
+                           "已跌穿200日線或者離52週高位超過30%" if IS_E else f"已由買入後最高收市 ${hh_['peak']:,.2f} 跌 ≥20%"])
     if st["pending_sell"]:
         lines.append("🔴 *下一個交易日收市前賣出*：" + "、".join(
             f"{t}（今日 ${st['hold'][t]['last_px']:,.2f}，" + ("已跌穿200日線或者離52週高位超過30%" if IS_E else "已由高位跌 ≥20%") + "）"

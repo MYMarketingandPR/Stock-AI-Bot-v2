@@ -1,13 +1,7 @@
 name: Daily Stock AI Agent V4 (Dual Track)
 
 on:
-  schedule:
-    # 美股收市後一小時先run（同main.py錢開，刻意同main.py錢開分開時段，避免兩個bot撞埋一齊出訊號）
-    # 收市16:00 ET，+1小時=17:00 ET。假設夏令時間(EDT, UTC-4) → 21:00 UTC
-    # ⚠️ 冬令時間(EST, UTC-5)會變咗17:00 ET其實係22:00 UTC，但cron寫住固定UTC時間，
-    #    所以每年11月至3月初（美國冬令時間）實際會early咗一個鐘(即ET 16:00先run,收市後即刻run)。
-    #    如果想全年都精準跟到「收市後一小時」，需要人手跟美國DST轉換日期改呢行cron,或者用第三方排程服務。
-    - cron: '0 21 * * 1-5'
+  # 2026-10-15：已停用自動排程（Esther 2026-10-09 要求暫停 main_v4.py 推送；搬去 Stock-AI-Bot-v2 時移除）
 
   # 允許手動點擊按鈕執行
   workflow_dispatch:

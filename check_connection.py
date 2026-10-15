@@ -22,4 +22,14 @@ except Exception as e:
 print("Google Sheet:", "OK" if ok_sh else "失敗")
 if not ok_sh:
     bad.append("Sheet")
+# 用參數揀只檢查邊樣，等 GitHub 每一步分開顯示成功/失敗
+which = sys.argv[1] if len(sys.argv) > 1 else "all"
+if which == "telegram":
+    sys.exit(0 if ok_tg else 1)
+if which == "sheet":
+    sys.exit(0 if ok_sh else 1)
+if which == "chatid":
+    sys.exit(0 if chat.strip().lstrip("-").isdigit() else 1)
+if which == "token":
+    sys.exit(0 if requests.get(f"https://api.telegram.org/bot{tok}/getMe", timeout=20).json().get("ok") else 1)
 sys.exit(1 if bad else 0)

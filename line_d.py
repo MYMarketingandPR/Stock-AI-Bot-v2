@@ -37,11 +37,13 @@ TRAIL = 0.20
 #   收市 < MA200 或者 收市 < 52週最高收市價 × 0.7 就賣；揸最多5隻。
 # 線E2（2026-10-15 加，第三十三輪P4，Esther 要求觀察）：同線E一樣，但嗰隻股票所屬行業嘅 SPDR 行業ETF 收市 < 200日平均
 #   就唔買（已揸嘅照線E規則賣）。行業 = Wikipedia 標普500 GICS Sector；冇分類 = 當過關。回測冇達到「有改善」標準，只係觀察。
-TAG = ("E2" if "--variant=E2" in sys.argv else "E" if "--variant=E" in sys.argv
+# 線E3（2026-10-15 加，第三十四輪參考G0，Esther 要求觀察）：同線E一樣，但 SPY 每日訊號 = 「現金」就唔開新倉（同線D2一樣嘅閘門）。
+#   回測 2015起 +28.1% / -32.6%（同線E差唔多），2000-2009 +12.1% / -46%（線E +4.5% / -62%）；未經預先登記判斷，只係觀察。
+TAG = ("E3" if "--variant=E3" in sys.argv else "E2" if "--variant=E2" in sys.argv else "E" if "--variant=E" in sys.argv
        else ("D2" if "--variant=D2" in sys.argv else "D"))
 LABEL = f"線{TAG}"
-SPY_GATE = TAG == "D2"
-IS_E = TAG in ("E", "E2")
+SPY_GATE = TAG in ("D2", "E3")
+IS_E = TAG in ("E", "E2", "E3")
 SECTOR_GATE = TAG == "E2"
 SECTOR_ETF = {"Information Technology": "XLK", "Health Care": "XLV", "Financials": "XLF", "Consumer Discretionary": "XLY",
               "Consumer Staples": "XLP", "Industrials": "XLI", "Materials": "XLB", "Energy": "XLE", "Utilities": "XLU",
@@ -225,6 +227,7 @@ def main():
         return None
 
     title = ("線E2：線E + 行業轉弱唔開新倉" if SECTOR_GATE else
+             "線E3：線E + SPY訊號「持有」先開新倉" if TAG == "E3" else
              "線E：今年升≥30% + 離高位<30% + 喺MA200上面" if IS_E else
              "線D2：線D + SPY訊號「持有」先開新倉" if SPY_GATE else "線D：倍升股 + 由高位跌20%賣")
     lines = [f"{'🅴' if IS_E else '🅳'} *{title}*（模擬本金 ${CAPITAL:,.0f}）{today}", ""]
@@ -303,7 +306,7 @@ def main():
     free = SLOTS - (len(st["hold"]) - len(st["pending_sell"]))
     cands = []
     gate_txt = ""
-    if SPY_GATE:                              # 線D2：SPY 每日訊號 = 現金 → 唔開新倉
+    if SPY_GATE:                              # 線D2／線E3：SPY 每日訊號 = 現金 → 唔開新倉
         sdf = bot.replay(bot.add_signals(bot.load_data()))
         sdf = sdf[sdf.index <= pd.Timestamp(today)]
         spy_hold = sdf["state"].iloc[-1] != "out"
@@ -427,7 +430,9 @@ def main():
         lines.append(gate_txt)
     rule = ("規則：今年升≥30% + 離52週最高位唔夠30% + 喺200日線上面先買（揀今年升最多）；跌穿200日線或者離52週高位超過30%就賣；揸最多5隻。"
             + ("（線E2 再加：嗰隻股所屬行業嘅ETF低過200日線就唔買；第三十三輪回測 +29.0%/年、最大跌幅 -32.9%，同線E差唔多，未達改善標準，只係觀察）"
-               if SECTOR_GATE else "（第二十六輪：2015年起回測 +28.7%/年，但 2000-2009 試過跌 -64%）") if IS_E else
+               if SECTOR_GATE else
+               "（線E3 再加：SPY每日訊號係「現金」嗰陣唔開新倉；第三十四輪參考回測 2015起 +28.1%/年、2000-2009 +12.1% / 最大跌幅 -46%，只係觀察）"
+               if TAG == "E3" else "（第二十六輪：2015年起回測 +28.7%/年，但 2000-2009 試過跌 -64%）") if IS_E else
             "規則：倍升股（12個月升≥100%）+ 喺MA50同MA200上面先買；由最高位跌20%就賣；揸最多5隻。"
             + ("（線D2：SPY每日訊號係「現金」嗰陣唔開新倉，用嚟同線D比較）" if SPY_GATE else ""))
     lines += ["", rule, "⚠️ 第二次倍升 = 之前一年都已經升 ≥100%，歷史上之後12個月中位數 -14.8%（只係提醒，唔影響買賣）。",

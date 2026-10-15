@@ -121,6 +121,16 @@ jobs:
         run: |
           if [ "${{ inputs.sheetonly }}" = "yes" ]; then python -u line_d.py --variant=E2 --sheet-only; else python -u line_d.py --variant=E2; fi
 
+      - name: 線E3（線E + SPY訊號持有先開新倉，2026-10-15 開始觀察）
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}
+          PAPER_CAPITAL: "80000"
+        run: |
+          if [ "${{ inputs.sheetonly }}" = "yes" ]; then python -u line_d.py --variant=E3 --sheet-only; else python -u line_d.py --variant=E3; fi
+
       - name: 月尾記低分析師EPS預測（自己儲歷史數據，第十四輪）
         continue-on-error: true
         run: |

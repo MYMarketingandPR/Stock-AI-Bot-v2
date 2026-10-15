@@ -35,10 +35,20 @@ TRAIL = 0.20
 # 線D2（2026-10-08 加，第二十二輪X2）：同線D一樣，但 SPY 每日訊號 = 「現金」嗰陣唔開新倉（已揸嘅照舊跌20%賣）
 # 線E（2026-10-08 加，第二十六輪Y3）：今年升 ≥30% + 收市 ≥ 52週最高收市價 × 0.7 + 收市 > MA200 就買（揀今年升得最多）；
 #   收市 < MA200 或者 收市 < 52週最高收市價 × 0.7 就賣；揸最多5隻。
-TAG = "E" if "--variant=E" in sys.argv else ("D2" if "--variant=D2" in sys.argv else "D")
+# 線E2（2026-10-15 加，第三十三輪P4，Esther 要求觀察）：同線E一樣，但嗰隻股票所屬行業嘅 SPDR 行業ETF 收市 < 200日平均
+#   就唔買（已揸嘅照線E規則賣）。行業 = Wikipedia 標普500 GICS Sector；冇分類 = 當過關。回測冇達到「有改善」標準，只係觀察。
+TAG = ("E2" if "--variant=E2" in sys.argv else "E" if "--variant=E" in sys.argv
+       else ("D2" if "--variant=D2" in sys.argv else "D"))
 LABEL = f"線{TAG}"
 SPY_GATE = TAG == "D2"
-IS_E = TAG == "E"
+IS_E = TAG in ("E", "E2")
+SECTOR_GATE = TAG == "E2"
+SECTOR_ETF = {"Information Technology": "XLK", "Health Care": "XLV", "Financials": "XLF", "Consumer Discretionary": "XLY",
+              "Consumer Staples": "XLP", "Industrials": "XLI", "Materials": "XLB", "Energy": "XLE", "Utilities": "XLU",
+              "Communication Services": "XLC", "Real Estate": "XLRE"}
+SECTOR_ZH = {"Information Technology": "資訊科技", "Health Care": "醫療", "Financials": "金融", "Consumer Discretionary": "非必需消費",
+             "Consumer Staples": "必需消費", "Industrials": "工業", "Materials": "原材料", "Energy": "能源", "Utilities": "公用",
+             "Communication Services": "通訊服務", "Real Estate": "房地產"}
 LOOKBACK_DAYS = 760                 # 夠計「之前一年」升幅（504個交易日）
 STATE = f"paper_log/line{TAG}_state.json"
 NAV = f"paper_log/line{TAG}_nav.tsv"
@@ -84,6 +94,20 @@ def recent_high(t, day, n=42):
     except Exception as e:
         print(f"{t} 近期高位攞唔到：{e}")
         return None, None
+
+
+def sector_map():
+    """線E2：標普500成分股 → GICS Sector（Wikipedia）。攞唔到就回傳 {}（全部當過關，訊息會註明）。"""
+    import io
+    import requests
+    try:
+        html = requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+                            headers={"User-Agent": "Mozilla/5.0"}, timeout=30).text
+        t = pd.read_html(io.StringIO(html))[0]
+        return {M.norm(a): b for a, b in zip(t["Symbol"], t["GICS Sector"]) if b in SECTOR_ETF}
+    except Exception as e:
+        print(f"行業分類攞唔到：{e}")
+        return {}
 
 
 def sell_rule_txt(h, s):
@@ -164,14 +188,15 @@ def main():
         return
     tickers, names = MM.current_sp500()
     held = list(st["hold"])
-    need = sorted(set(tickers) | set(held) | set(st["pending_buy"]) | {"QQQ"})
+    need = sorted(set(tickers) | set(held) | set(st["pending_buy"]) | {"QQQ"} | (set(SECTOR_ETF.values()) if SECTOR_GATE else set()))
     closes = M.download_close(need, (pd.Timestamp(today) - pd.Timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d"),
                               (pd.Timestamp(today) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"))
     px = pd.DataFrame(closes).sort_index()
     px = px[px.index.dayofweek < 5]
     # 逐隻檢查有冇今日收市價（2026-10-08 修正：之前有啲股票用咗前一日價）
     final = PR.last_chance()
-    critical = sorted(set(held) | set(st["pending_buy"]) | set(st["pending_sell"]) | {"QQQ"})
+    critical = sorted(set(held) | set(st["pending_buy"]) | set(st["pending_sell"]) | {"QQQ"}
+                      | (set(SECTOR_ETF.values()) if SECTOR_GATE else set()))
     px, miss_c = PR.ensure_fresh(px, critical, today)
     if "QQQ" in miss_c:
         print(f"{LABEL}：{today} 未有收市數據（可能休市，或者 Yahoo 未更新），遲啲再試。")
@@ -199,7 +224,8 @@ def main():
                 return float(v)
         return None
 
-    title = ("線E：今年升≥30% + 離高位<30% + 喺MA200上面" if IS_E else
+    title = ("線E2：線E + 行業轉弱唔開新倉" if SECTOR_GATE else
+             "線E：今年升≥30% + 離高位<30% + 喺MA200上面" if IS_E else
              "線D2：線D + SPY訊號「持有」先開新倉" if SPY_GATE else "線D：倍升股 + 由高位跌20%賣")
     lines = [f"{'🅴' if IS_E else '🅳'} *{title}*（模擬本金 ${CAPITAL:,.0f}）{today}", ""]
     traded = 0.0
@@ -298,6 +324,20 @@ def main():
             ytd = lastp / ye - 1
             hi52 = p0[uni].iloc[-252:].max()
             sel = ytd[(ytd >= 0.30) & (lastp >= hi52 * 0.7) & (lastp > ma200)].sort_values(ascending=False)
+            if SECTOR_GATE:                   # 線E2：行業ETF收市 < 200日平均 → 嗰個行業唔開新倉
+                smap = sector_map()
+                weak = []
+                for g, e in SECTOR_ETF.items():
+                    if e in px.columns:
+                        se = px[e].dropna()
+                        if len(se) >= 200 and se.iloc[-1] < se.iloc[-200:].mean():
+                            weak.append(g)
+                before = list(sel.index)
+                sel = sel[[smap.get(t) not in weak for t in sel.index]]
+                skipped = [t for t in before[:SLOTS + 5] if t not in sel.index and t not in st["hold"]]
+                gate_txt = ("行業轉弱（行業ETF低過200日線）：" + ("、".join(SECTOR_ZH[g] for g in weak) if weak else "冇")
+                            + ("；今日因此冇買：" + "、".join(skipped) if skipped else "")
+                            + ("" if smap else "（⚠️ 今日攞唔到行業分類，全部當過關）"))
         else:
             sel = r12[(r12 >= 1.0) & (lastp > ma50) & (lastp > ma200)].sort_values(ascending=False)
         cands = [t for t in sel.index if t not in st["hold"]]
@@ -386,7 +426,8 @@ def main():
     if gate_txt:
         lines.append(gate_txt)
     rule = ("規則：今年升≥30% + 離52週最高位唔夠30% + 喺200日線上面先買（揀今年升最多）；跌穿200日線或者離52週高位超過30%就賣；揸最多5隻。"
-            "（第二十六輪：2015年起回測 +28.7%/年，但 2000-2009 試過跌 -64%）" if IS_E else
+            + ("（線E2 再加：嗰隻股所屬行業嘅ETF低過200日線就唔買；第三十三輪回測 +29.0%/年、最大跌幅 -32.9%，同線E差唔多，未達改善標準，只係觀察）"
+               if SECTOR_GATE else "（第二十六輪：2015年起回測 +28.7%/年，但 2000-2009 試過跌 -64%）") if IS_E else
             "規則：倍升股（12個月升≥100%）+ 喺MA50同MA200上面先買；由最高位跌20%就賣；揸最多5隻。"
             + ("（線D2：SPY每日訊號係「現金」嗰陣唔開新倉，用嚟同線D比較）" if SPY_GATE else ""))
     lines += ["", rule, "⚠️ 第二次倍升 = 之前一年都已經升 ≥100%，歷史上之後12個月中位數 -14.8%（只係提醒，唔影響買賣）。",

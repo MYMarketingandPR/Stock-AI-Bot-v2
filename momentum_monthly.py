@@ -442,7 +442,7 @@ def monthly_scoreboard(today, dry):
             t = navs[tr]["turn"].copy()
             t.iloc[0] = 0.0          # 第一次買入唔計換手
             series[f"線{tr}"] = (r, t)
-    for tg in ("D", "D2", "E"):                                   # 線D、線D2（line_d.py，每日自己記總值）
+    for tg in ("D", "D2", "E", "E2"):                                   # 線D、線D2（line_d.py，每日自己記總值）
         fp = f"paper_log/line{tg}_nav.tsv"
         if not os.path.exists(fp):
             continue
@@ -503,9 +503,10 @@ def monthly_scoreboard(today, dry):
 
     days = stats[next(iter(stats))]["days"]
     lines = [f"🗓️ *每月成績表* {today}（由 {start_day.date()} 開始，{days} 個交易日）", "",
-             "*我哋嘅線*", table(["線A", "線B", "線C", "線D", "線D2", "線E"]),
+             "*我哋嘅線*", table(["線A", "線B", "線C", "線D", "線D2", "線E", "線E2"]),
              "線D2 = 線D + SPY每日訊號「持有」先開新倉（第二十二輪唯一有改善，2026-10-08 開始驗證）",
-             "線E = 今年升≥30% + 離高位<30% + 喺MA200上面；跌穿MA200或離高位>30%就賣（第二十六輪，2026-10-08 開始）", "",
+             "線E = 今年升≥30% + 離高位<30% + 喺MA200上面；跌穿MA200或離高位>30%就賣（第二十六輪，2026-10-08 開始）",
+             "線E2 = 線E + 行業ETF低過200日線就唔買（第三十三輪，2026-10-15 開始觀察）", "",
              "*比較對象*", table(["SPY", "QQQ", "QQQM", "MTUM"]), "",
              "*三個組合（用模擬交易真實數字計，每日固定比例）*", table(["組合甲", "組合乙", "組合丙", "QQQ"]),
              "組合甲 = 70% SPY訊號 + 15% 線A + 15% 線D（回測守得住科網爆煲：2000-2009 最大跌幅 -31%）",

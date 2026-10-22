@@ -1,0 +1,58 @@
+name: Pullback scan (daily Telegram)
+
+# 每日收市後大約30分鐘發「回調訊號掃描」（pullback_scan.py；Esther 2026-10-23 要求）
+# 美國夏令時間收市 = UTC 20:00，冬令時間 = UTC 21:00 → 兩個時間都排；程式自己判斷收咗市未、發咗未。
+# 後備：UTC 23:45（--final：數據唔齊都照發）。GitHub 排程有時會遲幾十分鐘。
+on:
+  schedule:
+    - cron: '30 20 * * 1-5'
+    - cron: '30 21 * * 1-5'
+    - cron: '45 23 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: paper-trading
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 安裝小幫手工具
+        run: pip install requests yfinance pandas numpy lxml
+
+      - name: 攞返之前嘅紀錄
+        run: |
+          git fetch origin paper-trading && git checkout origin/paper-trading -- paper_log || echo "未有紀錄"
+
+      - name: 回調訊號掃描
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event_name }}" = "schedule" ]; then ARGS="--scheduled"; fi
+          if [ "${{ github.event.schedule }}" = "45 23 * * 1-5" ]; then ARGS="$ARGS --final"; fi
+          python -u pullback_scan.py $ARGS
+
+      - name: 將紀錄放去 paper-trading 分支
+        run: |
+          if [ ! -d paper_log ]; then echo "冇紀錄"; exit 0; fi
+          mkdir -p /tmp/log && cp paper_log/* /tmp/log/ && rm -rf paper_log
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git fetch origin paper-trading
+          git checkout -B paper-trading origin/paper-trading
+          mkdir -p paper_log && cp /tmp/log/* paper_log/
+          git add paper_log
+          git commit -m "pullback scan log (run ${{ github.run_id }})" || echo "冇改變"
+          git push origin paper-trading

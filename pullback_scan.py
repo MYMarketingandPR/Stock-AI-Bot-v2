@@ -47,7 +47,7 @@ def ohlc(t, start, end):
             h = yf.Ticker(t).history(start=start, end=end, auto_adjust=True)
             if h is None or h.empty:
                 return None
-            h = h[["Open", "High", "Low", "Close"]].astype(float)
+            h = h[["Open", "High", "Low", "Close", "Volume"]].astype(float)
             h.index = pd.DatetimeIndex(h.index).tz_localize(None).normalize()
             return h[~h.index.duplicated(keep="last")]
         except Exception:
@@ -77,8 +77,27 @@ def check(h, day):
     if not (ma20 > ma20_5 and last >= ma20 and low <= ma10 * 1.01):
         return None
     risk = 1 - low / last
+    # ATR(14)（Wilder 平均真實波幅）：每日正常上落大約幾多錢
+    pc = c.shift(1)
+    tr = pd.concat([h["High"] - h["Low"], (h["High"] - pc).abs(), (h["Low"] - pc).abs()], axis=1).max(axis=1)
+    atr = float(tr.ewm(alpha=1 / 14, adjust=False).mean().iloc[-1])
+    # 成交量：今日 ÷ 之前50日平均；近5日平均 ÷ 之前50日平均；今日喺過去60日排第幾（百分位）
+    v = h["Volume"] if "Volume" in h else pd.Series(dtype=float)
+    vol = vr = vr5 = vpct = None
+    if len(v) >= 60 and v.iloc[-55:-5].mean() > 0:
+        vol = float(v.iloc[-1])
+        base = float(v.iloc[-51:-1].mean())
+        vr = vol / base if base > 0 else None
+        vr5 = float(v.iloc[-5:].mean()) / base if base > 0 else None
+        vpct = float((v.iloc[-60:] <= vol).mean() * 100)
     return {"ytd": ytd, "close": last, "low": low, "ma10": ma10, "ma20": ma20, "ma200": ma200, "hi52": hi52,
-            "risk": risk, "too_far": risk > 0.08}
+            "risk": risk, "too_far": risk > 0.08, "atr": atr, "vol": vol, "vr": vr, "vr5": vr5, "vpct": vpct}
+
+
+def vol_word(r):
+    if r is None:
+        return "—"
+    return "大幅多過平時" if r >= 2 else "多過平時" if r >= 1.2 else "差唔多" if r >= 0.8 else "少過平時"
 
 
 def news(t, days=3, n=2):
@@ -195,14 +214,19 @@ def filing_text(fl):
     return "；".join(parts)
 
 
+def fmt2(x):
+    return "" if x is None else f"{x:.2f}"
+
+
 def append_log(day, rows, sec):
     os.makedirs("paper_log", exist_ok=True)
-    header = "date\tticker\tytd\tclose\tlow_stop\tma10\tma20\trisk_pct\tpicked\tsector\n"
+    header = "date\tticker\tytd\tclose\tlow_stop\tma10\tma20\trisk_pct\tpicked\tsector\tatr\tatr_pct\tvol_ratio\tvol5_ratio\n"
+    ncol = header.count("\t") + 1
     if os.path.exists(LOG):
         old = open(LOG).read().splitlines()
-        if old and not old[0].endswith("sector"):           # 2026-10-23 加咗行業欄：舊紀錄補空格
+        if old and old[0] + "\n" != header:                  # 欄位有加：舊紀錄補空格
             with open(LOG, "w") as f:
-                f.write(header + "".join(ln + "\t\n" for ln in old[1:]))
+                f.write(header + "".join(ln + "\t" * (ncol - 1 - ln.count("\t")) + "\n" for ln in old[1:]))
         old_rows = [ln for ln in open(LOG).read().splitlines()[1:] if not ln.startswith(f"{day}\t")]
         with open(LOG, "w") as f:                          # 同一日重跑就覆蓋返嗰日
             f.write(header + "".join(ln + "\n" for ln in old_rows))
@@ -212,7 +236,8 @@ def append_log(day, rows, sec):
     with open(LOG, "a") as f:
         for t, s, picked in rows:
             f.write(f"{day}\t{t}\t{s['ytd'] * 100:.1f}\t{s['close']:.2f}\t{s['low']:.2f}\t{s['ma10']:.2f}\t{s['ma20']:.2f}\t"
-                    f"{s['risk'] * 100:.1f}\t{int(picked)}\t{sec.get(t, '')}\n")
+                    f"{s['risk'] * 100:.1f}\t{int(picked)}\t{sec.get(t, '')}\t{s['atr']:.2f}\t{s['atr'] / s['close'] * 100:.2f}\t"
+                    f"{fmt2(s['vr'])}\t{fmt2(s['vr5'])}\n")
 
 
 def main():
@@ -268,7 +293,15 @@ def main():
         s = sig[t]
         lines.append(f"*{n}. {t}*（{names.get(t, '')}｜{sec.get(t, '行業未知')}）今年 {s['ytd'] * 100:+.0f}%")
         lines.append(f"　收市 ${s['close']:,.2f} ｜ 今日最低 ${s['low']:,.2f} ｜ 10日線 ${s['ma10']:,.2f} ｜ 20日線 ${s['ma20']:,.2f}")
-        lines.append(f"　止蝕位 ${s['low']:,.2f}（離收市 -{s['risk'] * 100:.1f}%）｜ 下一個交易日收市低過 ${s['low']:,.2f} 就唔買")
+        stop_atr = (s["close"] - s["low"]) / s["atr"] if s["atr"] > 0 else None
+        lines.append(f"　止蝕位 ${s['low']:,.2f}｜止蝕距離 -{s['risk'] * 100:.1f}%"
+                     + (f"（約 {stop_atr:.1f} 個 ATR）" if stop_atr is not None else "")
+                     + f"｜ 下一個交易日收市低過 ${s['low']:,.2f} 就唔買")
+        lines.append(f"　ATR(14) ${s['atr']:,.2f}（每日正常上落約 {s['atr'] / s['close'] * 100:.1f}%）"
+                     + ("｜ ⚠️ 止蝕少過半個 ATR，正常上落都可能掃到" if stop_atr is not None and stop_atr < 0.5 else ""))
+        if s["vr"] is not None:
+            lines.append(f"　成交量：今日 {s['vol'] / 1e6:.2f} 百萬股，係之前50日平均嘅 {s['vr']:.1f} 倍（{vol_word(s['vr'])}）｜ "
+                         f"近5日平均 {s['vr5']:.1f} 倍（{vol_word(s['vr5'])}）｜ 今日喺過去60日排第 {s['vpct']:.0f} 百分位")
         ed = next_earnings(t)
         if ed:
             gap = np.busday_count(day, ed)

@@ -4,7 +4,6 @@
 下載 400/503，有今日數據 400
 下載 500/503，有今日數據 500
 2026-10-22：有今日（2026-10-22）數據 503/503（100%）
-SEC 代號表攞唔到：Expecting value: line 1 column 1 (char 0)
 🔍 *回調訊號掃描* 2026-10-22（標普500，收市後）
 
 今日符合條件：34 隻；顯示今年升最多嘅 10 隻
@@ -17,9 +16,11 @@ SEC 代號表攞唔到：Expecting value: line 1 column 1 (char 0)
 　離52週最高收市 $484.92 仲有 +5.6%（上面空間）
 　止蝕位 $448.38｜止蝕距離 -2.4%（約 0.6 個 ATR）｜ 下一個交易日收市低過 $448.38 就唔買
 　ATR(14) $16.83（每日正常上落約 3.7%）
-　成交量：今日 2.60 百萬股，係之前50日平均嘅 1.0 倍（差唔多） ✅ ｜ 近5日平均 0.8 倍（差唔多）｜ 今日喺過去60日排第 70 百分位
+　成交量：今日跌 -1.9%，成交 2.60 百萬股 = 之前50日平均 1.0 倍（差唔多，跌市但成交唔多）｜ 近5日平均 0.8 倍
+　回落日成交量：最近5日入面下跌嗰幾日平均 0.9 倍（差唔多） ✅
 　⚠️ 下次業績：2026-11-03（8 個交易日後）— 業績日有機會裂口大跌，止蝕可能失效
-　📰 最近3日冇新聞
+　📰 10-21 Marathon Petroleum (MPC) Stock Falls Amid Market Uptick: What Investors Need to Know（）https://finance.yahoo.com/markets/stocks/articles/marathon-petroleum-mpc-stock-falls-204504312.html?.tsrc=rss
+　📰 10-21 Cognite Earns Corporate Supplier of the Year Award from Marathon Petroleum Corporation（）https://finance.yahoo.com/energy/articles/cognite-earns-corporate-supplier-award-170600961.html?.tsrc=rss
 　📄 公告（7日內）：冇
 
 *2. VLO*（Valero Energy｜能源）今年 +166% ✅
@@ -28,10 +29,13 @@ SEC 代號表攞唔到：Expecting value: line 1 column 1 (char 0)
 　離52週最高收市 $459.78 仲有 +7.9%（上面空間）
 　止蝕位 $416.41｜止蝕距離 -2.3%（約 0.6 個 ATR）｜ 下一個交易日收市低過 $416.41 就唔買
 　ATR(14) $17.05（每日正常上落約 4.0%）
-　成交量：今日 2.80 百萬股，係之前50日平均嘅 0.9 倍（差唔多） ✅ ｜ 近5日平均 0.8 倍（差唔多）｜ 今日喺過去60日排第 62 百分位
-　⚠️ 下次業績：2026-10-22（0 個交易日後）— 業績日有機會裂口大跌，止蝕可能失效
-　📰 最近3日冇新聞
-　📄 公告（7日內）：冇
+　成交量：今日跌 -2.4%，成交 2.80 百萬股 = 之前50日平均 0.9 倍（差唔多，跌市但成交唔多）｜ 近5日平均 0.8 倍
+　回落日成交量：最近5日入面下跌嗰幾日平均 0.9 倍（差唔多） ✅
+　⚠️ 業績：今日（2026-10-22）公布，留意明日開市反應
+　📰 10-23 Valero Q3 Earnings Surge Sixfold to $6.8 Billion on Refining Boom（）https://finance.yahoo.com/energy/articles/valero-q3-earnings-surge-sixfold-030000667.html?.tsrc=rss
+　📰 10-23 Valero Energy Q3 Earnings Call Highlights（）https://www.marketbeat.com/instant-alerts/transcript-valero-energy-q3-earnings-call-highlights-2026-10-22/?utm_source=yahoofinance&utm_medium=yahoofinance&.tsrc=rss
+　📄 公告（7日內）：10-22 8-K 重大事件公告（Corporate Changes & Voting Matters）
+　　https://finance.yahoo.com/sec-filing/VLO/0001628280-26-066795_1035002
 
 *3. PSX*（Phillips 66｜能源）今年 +125% ✅✅
 　⚠️ 同類股：同 MPC、VLO 同屬「Oil & Gas Refining & Marketing」，會一齊升跌，揀一隻就夠
@@ -39,9 +43,11 @@ SEC 代號表攞唔到：Expecting value: line 1 column 1 (char 0)
 　離52週最高收市 $297.29 仲有 +4.4%（上面空間）
 　止蝕位 $278.08｜止蝕距離 -2.3%（約 0.7 個 ATR） ✅｜ 下一個交易日收市低過 $278.08 就唔買
 　ATR(14) $9.17（每日正常上落約 3.2%）
-　成交量：今日 2.04 百萬股，係之前50日平均嘅 0.7 倍（少過平時） ✅ ｜ 近5日平均 0.8 倍（少過平時）｜ 今日喺過去60日排第 17 百分位
+　成交量：今日跌 -1.9%，成交 2.04 百萬股 = 之前50日平均 0.7 倍（少過平時，跌市但成交唔多）｜ 近5日平均 0.8 倍
+　回落日成交量：最近5日入面下跌嗰幾日平均 0.7 倍（少過平時） ✅
 　⚠️ 下次業績：2026-10-28（4 個交易日後）— 業績日有機會裂口大跌，止蝕可能失效
-　📰 最近3日冇新聞
+　📰 10-23 Phillips 66 (PSX) Raises Quarterly Dividend To $1.33 Per Share（）https://finance.yahoo.com/markets/stocks/articles/phillips-66-psx-raises-quarterly-091610026.html?.tsrc=rss
+　📰 10-22 Phillips 66 (PSX) Falls More Steeply Than Broader Market: What Investors Need to Know（）https://finance.yahoo.com/markets/stocks/articles/phillips-66-psx-falls-more-211502273.html?.tsrc=rss
 　📄 公告（7日內）：冇
 
 *4. APA*（APA Corporation｜能源）今年 +108% ✅✅
@@ -49,9 +55,11 @@ SEC 代號表攞唔到：Expecting value: line 1 column 1 (char 0)
 　離52週最高收市 $49.65 仲有 +0.4%（上面空間）
 　止蝕位 $47.83｜止蝕距離 -3.3%（約 1.0 個 ATR） ✅｜ 下一個交易日收市低過 $47.83 就唔買
 　ATR(14) $1.57（每日正常上落約 3.2%）
-　成交量：今日 5.36 百萬股，係之前50日平均嘅 1.0 倍（差唔多） ✅ ｜ 近5日平均 1.0 倍（差唔多）｜ 今日喺過去60日排第 50 百分位
+　成交量：今日升 +0.1%，成交 5.36 百萬股 = 之前50日平均 1.0 倍（差唔多，升市但成交唔多）｜ 近5日平均 1.0 倍
+　回落日成交量：最近5日入面下跌嗰幾日平均 1.2 倍（差唔多） ✅
 　⚠️ 下次業績：2026-11-04（9 個交易日後）— 業績日有機會裂口大跌，止蝕可能失效
-　📰 最近3日冇新聞
+　📰 10-22 APA Plans to Keep Forties Charlie Operational Amid Strike Threat（）https://finance.yahoo.com/energy/articles/apa-plans-keep-forties-charlie-142500533.html?.tsrc=rss
+　📰 10-23 Dollar General and Las Vegas Sands have been highlighted as Zacks Bull and Bear of the Day（）https://finance.yahoo.com/markets/stocks/articles/dollar-general-las-vegas-sands-055800984.html?.tsrc=rss
 　📄 公告（7日內）：冇
 
 *5. CNC*（Centene Corporation｜醫療）今年 +73% ✅
@@ -60,9 +68,11 @@ SEC 代號表攞唔到：Expecting value: line 1 column 1 (char 0)
 　離52週最高收市 $71.24 仲有 +0.0%（上面空間）
 　止蝕位 $69.79｜止蝕距離 -2.0%（約 0.6 個 ATR）｜ 下一個交易日收市低過 $69.79 就唔買
 　ATR(14) $2.23（每日正常上落約 3.1%）
-　成交量：今日 4.70 百萬股，係之前50日平均嘅 1.1 倍（差唔多） ✅ ｜ 近5日平均 0.8 倍（差唔多）｜ 今日喺過去60日排第 75 百分位
+　成交量：今日升 +1.4%，成交 4.70 百萬股 = 之前50日平均 1.1 倍（差唔多，升市但成交唔多）｜ 近5日平均 0.8 倍
+　回落日成交量：最近5日入面下跌嗰幾日平均 0.8 倍（少過平時） ✅
 　⚠️ 下次業績：2026-10-27（3 個交易日後）— 業績日有機會裂口大跌，止蝕可能失效
-　📰 最近3日冇新聞
+　📰 10-21 Centene, Oscar, UnitedHealthcare sidle into some new counties in 2027 ACA plans（）https://www.healthcaredive.com/news/centene-oscar-unitedhealthcare-new-counties-aca-2027/833442/?.tsrc=rss
+　📰 10-23 Has Buying Cigna Stock At A High Paid Off?（）https://www.trefis.com/articles/620183/has-buying-cigna-stock-at-a-high-paid-off/2026-10-23?.tsrc=rss
 　📄 公告（7日內）：冇
 
 *6. HUM*（Humana｜醫療）今年 +66%
@@ -71,9 +81,11 @@ SEC 代號表攞唔到：Expecting value: line 1 column 1 (char 0)
 　離52週最高收市 $433.50 仲有 +3.0%（上面空間）
 　止蝕位 $417.49｜止蝕距離 -0.8%（約 0.2 個 ATR）｜ 下一個交易日收市低過 $417.49 就唔買
 　ATR(14) $16.96（每日正常上落約 4.0%）｜ ⚠️ 止蝕少過半個 ATR，正常上落都可能掃到
-　成交量：今日 1.81 百萬股，係之前50日平均嘅 1.4 倍（多過平時） ｜ 近5日平均 1.3 倍（多過平時）｜ 今日喺過去60日排第 85 百分位
+　成交量：今日跌 -1.0%，成交 1.81 百萬股 = 之前50日平均 1.4 倍（多過平時，跌市有沽壓）｜ 近5日平均 1.3 倍
+　回落日成交量：最近5日入面下跌嗰幾日平均 1.2 倍（多過平時） — 跌嗰陣成交多，有人沽貨
 　下次業績：2026-11-06
-　📰 最近3日冇新聞
+　📰 10-21 Humana Gains From Premium Growth Despite Rising Benefit Costs（）https://finance.yahoo.com/healthcare/articles/humana-gains-premium-growth-despite-132100031.html?.tsrc=rss
+　📰 10-21 Humana (HUM) Recasts CenterWell Clinics With New Joint Venture And Fresh Capital（）https://finance.yahoo.com/healthcare/articles/humana-hum-recasts-centerwell-clinics-042934376.html?.tsrc=rss
 　📄 公告（7日內）：冇
 
 *7. DVA*（DaVita｜醫療）今年 +64%
@@ -81,9 +93,11 @@ SEC 代號表攞唔到：Expecting value: line 1 column 1 (char 0)
 　離52週最高收市 $240.96 仲有 +29.5%（上面空間）
 　止蝕位 $176.38｜止蝕距離 -5.2%（約 1.6 個 ATR）｜ 下一個交易日收市低過 $176.38 就唔買
 　ATR(14) $6.04（每日正常上落約 3.2%）
-　成交量：今日 0.93 百萬股，係之前50日平均嘅 1.4 倍（多過平時） ｜ 近5日平均 1.5 倍（多過平時）｜ 今日喺過去60日排第 80 百分位
+　成交量：今日升 +5.3%，成交 0.93 百萬股 = 之前50日平均 1.4 倍（多過平時，升市有買盤）｜ 近5日平均 1.5 倍
+　回落日成交量：最近5日入面下跌嗰幾日平均 1.5 倍（多過平時） — 跌嗰陣成交多，有人沽貨
 　⚠️ 下次業績：2026-10-29（5 個交易日後）— 業績日有機會裂口大跌，止蝕可能失效
-　📰 最近3日冇新聞
+　📰 10-22 DaVita Stock Gains 55.6% Year to Date: What's Behind the Rally?（）https://finance.yahoo.com/healthcare/articles/davita-stock-gains-55-6-173800803.html?.tsrc=rss
+　📰 10-22 Outpatient & specialty care stocks Q2 teardown: DaVita (NYSE:DVA) vs the rest（）https://finance.yahoo.com/healthcare/articles/outpatient-specialty-care-stocks-q2-142953292.html?.tsrc=rss
 　📄 公告（7日內）：冇
 
 *8. RVTY*（Revvity｜醫療）今年 +63% ✅
@@ -91,9 +105,11 @@ SEC 代號表攞唔到：Expecting value: line 1 column 1 (char 0)
 　離52週最高收市 $157.36 仲有 +0.0%（上面空間）
 　止蝕位 $154.87｜止蝕距離 -1.6%（約 0.4 個 ATR）｜ 下一個交易日收市低過 $154.87 就唔買
 　ATR(14) $5.83（每日正常上落約 3.7%）｜ ⚠️ 止蝕少過半個 ATR，正常上落都可能掃到
-　成交量：今日 1.78 百萬股，係之前50日平均嘅 0.9 倍（差唔多） ✅ ｜ 近5日平均 0.8 倍（差唔多）｜ 今日喺過去60日排第 53 百分位
+　成交量：今日升 +0.5%，成交 1.78 百萬股 = 之前50日平均 0.9 倍（差唔多，升市但成交唔多）｜ 近5日平均 0.8 倍
+　回落日成交量：最近5日入面下跌嗰幾日平均 0.7 倍（少過平時） ✅
 　⚠️ 下次業績：2026-11-03（8 個交易日後）— 業績日有機會裂口大跌，止蝕可能失效
-　📰 最近3日冇新聞
+　📰 10-22 Revvity Launches Signals LabGistics to Coordinate Scientific Workflows（）https://finance.yahoo.com/healthcare/articles/revvity-launches-signals-labgistics-coordinate-133400756.html?.tsrc=rss
+　📰 10-20 Revvity Launches Signals LabGistics Solution to Connect and Orchestrate Scientific Workflows（）https://finance.yahoo.com/healthcare/articles/revvity-launches-signals-labgistics-solution-120000173.html?.tsrc=rss
 　📄 公告（7日內）：冇
 
 *9. NUE*（Nucor｜原材料）今年 +60% ✅✅
@@ -101,22 +117,26 @@ SEC 代號表攞唔到：Expecting value: line 1 column 1 (char 0)
 　離52週最高收市 $274.09 仲有 +6.2%（上面空間）
 　止蝕位 $250.74｜止蝕距離 -2.8%（約 0.9 個 ATR） ✅｜ 下一個交易日收市低過 $250.74 就唔買
 　ATR(14) $7.87（每日正常上落約 3.1%）
-　成交量：今日 1.53 百萬股，係之前50日平均嘅 1.2 倍（差唔多） ✅ ｜ 近5日平均 1.0 倍（差唔多）｜ 今日喺過去60日排第 83 百分位
+　成交量：今日跌 -2.4%，成交 1.53 百萬股 = 之前50日平均 1.2 倍（差唔多，跌市但成交唔多）｜ 近5日平均 1.0 倍
+　回落日成交量：最近5日入面下跌嗰幾日平均 1.2 倍（差唔多） ✅
 　⚠️ 下次業績：2026-10-26（2 個交易日後）— 業績日有機會裂口大跌，止蝕可能失效
-　📰 最近3日冇新聞
+　📰 10-22 Nucor Expands Towers & Structures Capacity to Meet Rising Demand（）https://finance.yahoo.com/markets/stocks/articles/nucor-expands-towers-structures-capacity-131500501.html?.tsrc=rss
+　📰 10-22 How Utility Pole Expansion Will Impact Nucor (NUE) Investors（）https://finance.yahoo.com/markets/stocks/articles/utility-pole-expansion-impact-nucor-021208075.html?.tsrc=rss
 　📄 公告（7日內）：冇
 
-*10. TRGP*（Targa Resources｜能源）今年 +59% ✅
+*10. TRGP*（Targa Resources｜能源）今年 +59% ✅✅
 　收市 $289.54 ｜ 今日最低 $281.87 ｜ 10日線 $290.92 ｜ 20日線 $285.75
 　離52週最高收市 $302.25 仲有 +4.4%（上面空間）
 　止蝕位 $281.87｜止蝕距離 -2.6%（約 1.0 個 ATR） ✅｜ 下一個交易日收市低過 $281.87 就唔買
 　ATR(14) $8.02（每日正常上落約 2.8%）
-　成交量：今日 1.63 百萬股，係之前50日平均嘅 1.4 倍（多過平時） ｜ 近5日平均 1.1 倍（差唔多）｜ 今日喺過去60日排第 88 百分位
+　成交量：今日跌 -2.1%，成交 1.63 百萬股 = 之前50日平均 1.4 倍（多過平時，跌市有沽壓）｜ 近5日平均 1.1 倍
+　回落日成交量：最近5日入面下跌嗰幾日平均 1.1 倍（差唔多） ✅
 　⚠️ 下次業績：2026-11-05（10 個交易日後）— 業績日有機會裂口大跌，止蝕可能失效
-　📰 最近3日冇新聞
+　📰 10-22 What to Expect From Targa Resources’ Q3 2026 Earnings Report（）https://www.barchart.com/story/news/8316305/what-to-expect-from-targa-resources-q3-2026-earnings-report?.tsrc=rss
 　📄 公告（7日內）：冇
 
-✅ 短炒參考：止蝕距離 0.7 至 1.2 個 ATR（唔太近、唔太遠）✅；回落嗰日成交量少過之前50日平均 1.2 倍 ✅；兩樣都符合 = ✅✅。呢兩個係常見短炒講法，我哋未回測過。
+✅ 短炒參考：止蝕距離 0.7 至 1.2 個 ATR（唔太近、唔太遠）✅；最近5日下跌嗰幾日成交量少過之前50日平均 1.2 倍 ✅；兩樣都符合 = ✅✅。呢兩個係常見短炒講法，我哋未回測過。
+公告來源：Yahoo 提供嘅美國證監會文件清單（唔包括高管買賣 Form 4）。新聞：Yahoo Finance（英文標題）。
 規則：今年升≥30% + 離52週最高位唔夠30% + 喺200日線上面；今日回落掂到10日線（最多高1%）+ 收市企喺20日線上面 + 20日線向上；止蝕 = 今日最低價（太遠 >8% 唔要）。
 ⚠️ 第三十七輪回測：呢個方法 2015 年起每年 -2.1%（跌穿10日線賣），未通過標準；只係觀察，唔會模擬交易。
 _唔係投資建議_

@@ -147,16 +147,18 @@ SECTOR_ZH = {"Information Technology": "資訊科技", "Health Care": "醫療", 
 
 
 def sectors():
-    """標普500成分股 → 行業（Wikipedia GICS Sector，中文）。攞唔到就回傳 {}。"""
+    """標普500成分股 → （行業中文, 細分行業英文）（Wikipedia GICS Sector / Sub-Industry）。攞唔到就回傳 {}, {}。"""
     import io
     try:
         html = requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
                             headers={"User-Agent": "Mozilla/5.0"}, timeout=30).text
         t = pd.read_html(io.StringIO(html))[0]
-        return {str(a).replace(".", "-"): SECTOR_ZH.get(b, b) for a, b in zip(t["Symbol"], t["GICS Sector"])}
+        keys = [str(a).replace(".", "-") for a in t["Symbol"]]
+        return (dict(zip(keys, [SECTOR_ZH.get(b, b) for b in t["GICS Sector"]])),
+                dict(zip(keys, t["GICS Sub-Industry"].astype(str))))
     except Exception as e:
         print(f"行業分類攞唔到：{e}")
-        return {}
+        return {}, {}
 
 
 _CIK = None
@@ -275,7 +277,7 @@ def main():
     ok = sorted([t for t, s in sig.items() if not s["too_far"]], key=lambda t: -sig[t]["ytd"])
     far = [t for t, s in sig.items() if s["too_far"]]
     picks = ok[:MAX_PICKS]
-    sec = sectors()
+    sec, sub = sectors()
     append_log(day, [(t, sig[t], t in picks) for t in sorted(sig, key=lambda t: -sig[t]["ytd"])], sec)
     cnt = {}
     for t in picks:
@@ -291,16 +293,24 @@ def main():
         lines.append("⚪ 今日冇股票符合回調訊號。")
     for n, t in enumerate(picks, 1):
         s = sig[t]
-        lines.append(f"*{n}. {t}*（{names.get(t, '')}｜{sec.get(t, '行業未知')}）今年 {s['ytd'] * 100:+.0f}%")
-        lines.append(f"　收市 ${s['close']:,.2f} ｜ 今日最低 ${s['low']:,.2f} ｜ 10日線 ${s['ma10']:,.2f} ｜ 20日線 ${s['ma20']:,.2f}")
         stop_atr = (s["close"] - s["low"]) / s["atr"] if s["atr"] > 0 else None
+        ok_atr = stop_atr is not None and 0.7 <= stop_atr <= 1.2           # 短炒條件①：止蝕 0.7–1.2 個 ATR
+        ok_vol = s["vr"] is not None and s["vr"] < 1.2                       # 短炒條件②：回落日成交量唔多過平時
+        tag = " ✅✅" if ok_atr and ok_vol else (" ✅" if ok_atr or ok_vol else "")
+        lines.append(f"*{n}. {t}*（{names.get(t, '')}｜{sec.get(t, '行業未知')}）今年 {s['ytd'] * 100:+.0f}%{tag}")
+        same = [x for x in picks if x != t and sub.get(x) and sub.get(x) == sub.get(t)]
+        if same:
+            lines.append(f"　⚠️ 同類股：同 {'、'.join(same)} 同屬「{sub.get(t)}」，會一齊升跌，揀一隻就夠")
+        lines.append(f"　收市 ${s['close']:,.2f} ｜ 今日最低 ${s['low']:,.2f} ｜ 10日線 ${s['ma10']:,.2f} ｜ 20日線 ${s['ma20']:,.2f}")
+        lines.append(f"　離52週最高收市 ${s['hi52']:,.2f} 仲有 {(s['hi52'] / s['close'] - 1) * 100:+.1f}%（上面空間）")
         lines.append(f"　止蝕位 ${s['low']:,.2f}｜止蝕距離 -{s['risk'] * 100:.1f}%"
-                     + (f"（約 {stop_atr:.1f} 個 ATR）" if stop_atr is not None else "")
+                     + (f"（約 {stop_atr:.1f} 個 ATR）" if stop_atr is not None else "") + (" ✅" if ok_atr else "")
                      + f"｜ 下一個交易日收市低過 ${s['low']:,.2f} 就唔買")
         lines.append(f"　ATR(14) ${s['atr']:,.2f}（每日正常上落約 {s['atr'] / s['close'] * 100:.1f}%）"
                      + ("｜ ⚠️ 止蝕少過半個 ATR，正常上落都可能掃到" if stop_atr is not None and stop_atr < 0.5 else ""))
         if s["vr"] is not None:
-            lines.append(f"　成交量：今日 {s['vol'] / 1e6:.2f} 百萬股，係之前50日平均嘅 {s['vr']:.1f} 倍（{vol_word(s['vr'])}）｜ "
+            lines.append(f"　成交量：今日 {s['vol'] / 1e6:.2f} 百萬股，係之前50日平均嘅 {s['vr']:.1f} 倍（{vol_word(s['vr'])}）"
+                         + (" ✅" if ok_vol else "") + " ｜ "
                          f"近5日平均 {s['vr5']:.1f} 倍（{vol_word(s['vr5'])}）｜ 今日喺過去60日排第 {s['vpct']:.0f} 百分位")
         ed = next_earnings(t)
         if ed:
@@ -319,7 +329,9 @@ def main():
         fl, link = filings(t)
         lines.append(f"　📄 公告（7日內）：{filing_text(fl)}" + (f"\n　　{link}" if fl and link else ""))
         lines.append("")
-    lines += ["規則：今年升≥30% + 離52週最高位唔夠30% + 喺200日線上面；今日回落掂到10日線（最多高1%）+ 收市企喺20日線上面"
+    lines += ["✅ 短炒參考：止蝕距離 0.7 至 1.2 個 ATR（唔太近、唔太遠）✅；回落嗰日成交量少過之前50日平均 1.2 倍 ✅；兩樣都符合 = ✅✅。"
+              "呢兩個係常見短炒講法，我哋未回測過。",
+              "規則：今年升≥30% + 離52週最高位唔夠30% + 喺200日線上面；今日回落掂到10日線（最多高1%）+ 收市企喺20日線上面"
               " + 20日線向上；止蝕 = 今日最低價（太遠 >8% 唔要）。",
               "⚠️ 第三十七輪回測：呢個方法 2015 年起每年 -2.1%（跌穿10日線賣），未通過標準；只係觀察，唔會模擬交易。",
               "_唔係投資建議_"]

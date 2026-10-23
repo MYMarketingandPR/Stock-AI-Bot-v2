@@ -8,7 +8,7 @@ pullback_scan.py — 每日「回調訊號」掃描（Esther 2026-10-23 要求�
   參考做法：下一個交易日收市買入；如果嗰日收市已經低過止蝕位就唔買。
 ⚠️ 第三十七輪回測（跌穿10日線賣）2015年起每年 -2.1%，未通過標準 —— 呢個掃描只係觀察，唔係投資建議，唔會自動模擬交易。
 
-新聞：Yahoo Finance 新聞（最近3日，每隻最多2條）。公告：美國證監會 EDGAR（最近7日），附中文解釋。
+新聞：Yahoo Finance RSS（攞唔到就用 Google News RSS），最近3日、每隻最多2條。公告：Yahoo 提供嘅美國證監會文件清單（最近7日；證監會網站拒絕 GitHub 連線；唔包括 Form 4）。
 下次業績日：Yahoo；10日內會特別提醒（第三十五輪：業績日一日跌≥10% 機會比平時高好多）。
 紀錄：paper_log/pullback_signals.tsv（每日訊號）、paper_log/pullback_done.txt（防重複發）。
 用法：python pullback_scan.py [--scheduled] [--final] [--dry]
@@ -29,7 +29,6 @@ import prices as PR
 DONE = "paper_log/pullback_done.txt"
 LOG = "paper_log/pullback_signals.tsv"
 MAX_PICKS = 10                      # 2026-10-23 Esther：由5隻改做10隻
-SEC_UA = {"User-Agent": "Stock-AI-Bot-v2 research 233071485+MYMarketingandPR@users.noreply.github.com"}
 FORM_ZH = {"4": "高管／大股東買賣股份", "144": "高管準備賣股", "8-K": "重大事件公告", "10-Q": "季度業績報告",
            "10-K": "年度報告", "SC 13G": "大股東持股變動", "SC 13D": "大股東持股變動（可能有意見）",
            "SC 13G/A": "大股東持股變動", "SC 13D/A": "大股東持股變動", "S-3": "準備發行新股／債券",
@@ -83,15 +82,19 @@ def check(h, day):
     atr = float(tr.ewm(alpha=1 / 14, adjust=False).mean().iloc[-1])
     # 成交量：今日 ÷ 之前50日平均；近5日平均 ÷ 之前50日平均；今日喺過去60日排第幾（百分位）
     v = h["Volume"] if "Volume" in h else pd.Series(dtype=float)
-    vol = vr = vr5 = vpct = None
+    vol = vr = vr5 = vpct = vd = None
     if len(v) >= 60 and v.iloc[-55:-5].mean() > 0:
         vol = float(v.iloc[-1])
         base = float(v.iloc[-51:-1].mean())
         vr = vol / base if base > 0 else None
         vr5 = float(v.iloc[-5:].mean()) / base if base > 0 else None
         vpct = float((v.iloc[-60:] <= vol).mean() * 100)
+        chg5 = c.iloc[-5:].values / c.iloc[-6:-1].values - 1                 # 最近5日每日升跌
+        down = chg5 < 0
+        vd = float(v.iloc[-5:].values[down].mean()) / base if base > 0 and down.any() else None
     return {"ytd": ytd, "close": last, "low": low, "ma10": ma10, "ma20": ma20, "ma200": ma200, "hi52": hi52,
-            "risk": risk, "too_far": risk > 0.08, "atr": atr, "vol": vol, "vr": vr, "vr5": vr5, "vpct": vpct}
+            "risk": risk, "too_far": risk > 0.08, "atr": atr, "vol": vol, "vr": vr, "vr5": vr5, "vpct": vpct,
+            "vd": vd, "chg": last / float(c.iloc[-2]) - 1}
 
 
 def vol_word(r):
@@ -100,32 +103,39 @@ def vol_word(r):
     return "大幅多過平時" if r >= 2 else "多過平時" if r >= 1.2 else "差唔多" if r >= 0.8 else "少過平時"
 
 
-def news(t, days=3, n=2):
-    import yfinance as yf
+def _rss(url, cutoff, n):
+    import xml.etree.ElementTree as ET
+    from email.utils import parsedate_to_datetime
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=30)
+    r.raise_for_status()
     out = []
-    try:
-        items = yf.Ticker(t).news or []
-    except Exception:
-        return out
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    for it in items:
-        c = it.get("content", it)
-        title = c.get("title")
-        when = None
-        if c.get("pubDate"):
-            try:
-                when = datetime.fromisoformat(c["pubDate"].replace("Z", "+00:00"))
-            except Exception:
-                when = None
-        elif it.get("providerPublishTime"):
-            when = datetime.fromtimestamp(int(it["providerPublishTime"]), timezone.utc)
-        pub = (c.get("provider") or {}).get("displayName") if isinstance(c.get("provider"), dict) else it.get("publisher")
-        url = ((c.get("canonicalUrl") or {}).get("url") if isinstance(c.get("canonicalUrl"), dict) else None) or it.get("link")
+    for it in ET.fromstring(r.content).findall(".//item"):
+        title, link, pd_ = it.findtext("title"), it.findtext("link"), it.findtext("pubDate")
+        try:
+            when = parsedate_to_datetime(pd_) if pd_ else None
+        except Exception:
+            when = None
         if title and (when is None or when >= cutoff):
-            out.append({"title": title, "when": when, "pub": pub or "", "url": url or ""})
+            out.append({"title": title.strip(), "when": when, "pub": "", "url": link or ""})
         if len(out) >= n:
             break
     return out
+
+
+def news(t, name="", days=3, n=2):
+    """最近幾日新聞標題（Yahoo Finance RSS；攞唔到就用 Google News RSS）。回傳 None = 兩個來源都攞唔到。"""
+    from urllib.parse import quote
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    try:
+        return _rss(f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={t}&region=US&lang=en-US", cutoff, n)
+    except Exception as e:
+        print(f"{t} Yahoo 新聞攞唔到：{e}")
+    try:
+        q = quote(f"{name} {t} stock".strip())
+        return _rss(f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en", cutoff, n)
+    except Exception as e:
+        print(f"{t} Google 新聞攞唔到：{e}")
+    return None
 
 
 def next_earnings(t):
@@ -161,59 +171,34 @@ def sectors():
         return {}, {}
 
 
-_CIK = None
-
-
-def cik_of(t):
-    global _CIK
-    if _CIK is None:
-        try:
-            j = requests.get("https://www.sec.gov/files/company_tickers.json", headers=SEC_UA, timeout=30).json()
-            _CIK = {v["ticker"].upper().replace(".", "-"): int(v["cik_str"]) for v in j.values()}
-        except Exception as e:
-            print(f"SEC 代號表攞唔到：{e}")
-            _CIK = {}
-    return _CIK.get(t.upper())
-
-
 def filings(t, days=7):
-    cik = cik_of(t)
-    if not cik:
-        return [], None
-    link = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&owner=include&count=40"
+    """最近幾日向美國證監會提交嘅文件（Yahoo 提供嘅清單；證監會網站會拒絕 GitHub 連線）。
+    回傳 None = 攞唔到。⚠️ Yahoo 清單唔包括高管買賣（Form 4）。"""
+    import yfinance as yf
     try:
-        j = requests.get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json", headers=SEC_UA, timeout=30).json()
-        r = j["filings"]["recent"]
+        fl = yf.Ticker(t).sec_filings or []
     except Exception as e:
-        print(f"{t} SEC 公告攞唔到：{e}")
-        return [], link
+        print(f"{t} 公告攞唔到：{e}")
+        return None
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
     out = []
-    for form, fd, items in zip(r.get("form", []), r.get("filingDate", []), r.get("items", [""] * len(r.get("form", [])))):
-        if fd < cutoff:
-            break
-        out.append({"form": form, "date": fd, "items": items or ""})
-    time.sleep(0.2)
-    return out, link
+    for f in fl:
+        d = str(f.get("date", ""))[:10]
+        if d >= cutoff:
+            out.append({"form": str(f.get("type", "")), "date": d, "title": str(f.get("title", "")), "url": f.get("edgarUrl", "")})
+    return out
 
 
 def filing_text(fl):
+    if fl is None:
+        return "攞唔到（資料來源出錯）"
     if not fl:
         return "冇"
-    cnt = {}
-    for f in fl:
-        cnt.setdefault(f["form"], []).append(f)
     parts = []
-    for form, fs in cnt.items():
-        zh = FORM_ZH.get(form, "其他文件")
-        extra = ""
-        if form.startswith("8-K"):
-            its = sorted({i.strip() for f in fs for i in f["items"].split(",") if i.strip()})
-            names = [ITEM_ZH.get(i, i) for i in its if i != "9.01"]
-            if names:
-                extra = "：" + "、".join(names)
-        parts.append(f"{form} {zh}{extra}" + (f" ×{len(fs)}" if len(fs) > 1 else "") + f"（{max(f['date'] for f in fs)[5:]}）")
-    return "；".join(parts)
+    for f in fl[:4]:
+        zh = FORM_ZH.get(f["form"], "")
+        parts.append(f"{f['date'][5:]} {f['form']}" + (f" {zh}" if zh else "") + (f"（{f['title']}）" if f["title"] else ""))
+    return "；".join(parts) + (f" 等 {len(fl)} 份" if len(fl) > 4 else "")
 
 
 def fmt2(x):
@@ -295,7 +280,7 @@ def main():
         s = sig[t]
         stop_atr = (s["close"] - s["low"]) / s["atr"] if s["atr"] > 0 else None
         ok_atr = stop_atr is not None and 0.7 <= stop_atr <= 1.2           # 短炒條件①：止蝕 0.7–1.2 個 ATR
-        ok_vol = s["vr"] is not None and s["vr"] < 1.2                       # 短炒條件②：回落日成交量唔多過平時
+        ok_vol = s["vd"] is not None and s["vd"] < 1.2                       # 短炒條件②：最近5日跌市日成交量唔多過平時
         tag = " ✅✅" if ok_atr and ok_vol else (" ✅" if ok_atr or ok_vol else "")
         lines.append(f"*{n}. {t}*（{names.get(t, '')}｜{sec.get(t, '行業未知')}）今年 {s['ytd'] * 100:+.0f}%{tag}")
         same = [x for x in picks if x != t and sub.get(x) and sub.get(x) == sub.get(t)]
@@ -309,28 +294,36 @@ def main():
         lines.append(f"　ATR(14) ${s['atr']:,.2f}（每日正常上落約 {s['atr'] / s['close'] * 100:.1f}%）"
                      + ("｜ ⚠️ 止蝕少過半個 ATR，正常上落都可能掃到" if stop_atr is not None and stop_atr < 0.5 else ""))
         if s["vr"] is not None:
-            lines.append(f"　成交量：今日 {s['vol'] / 1e6:.2f} 百萬股，係之前50日平均嘅 {s['vr']:.1f} 倍（{vol_word(s['vr'])}）"
-                         + (" ✅" if ok_vol else "") + " ｜ "
-                         f"近5日平均 {s['vr5']:.1f} 倍（{vol_word(s['vr5'])}）｜ 今日喺過去60日排第 {s['vpct']:.0f} 百分位")
+            up = s["chg"] >= 0
+            mood = ("升市有買盤" if up else "跌市有沽壓") if s["vr"] >= 1.2 else ("升市但成交唔多" if up else "跌市但成交唔多")
+            lines.append(f"　成交量：今日{'升' if up else '跌'} {s['chg'] * 100:+.1f}%，成交 {s['vol'] / 1e6:.2f} 百萬股 = 之前50日平均 {s['vr']:.1f} 倍"
+                         f"（{vol_word(s['vr'])}，{mood}）｜ 近5日平均 {s['vr5']:.1f} 倍")
+            lines.append("　回落日成交量：" + (f"最近5日入面下跌嗰幾日平均 {s['vd']:.1f} 倍（{vol_word(s['vd'])}）" + (" ✅" if ok_vol else " — 跌嗰陣成交多，有人沽貨")
+                                              if s["vd"] is not None else "最近5日冇下跌日"))
         ed = next_earnings(t)
         if ed:
             gap = np.busday_count(day, ed)
-            if 0 <= gap <= 10:
+            if gap == 0:
+                lines.append(f"　⚠️ 業績：今日（{ed}）公布，留意明日開市反應")
+            elif 0 < gap <= 10:
                 lines.append(f"　⚠️ 下次業績：{ed}（{gap} 個交易日後）— 業績日有機會裂口大跌，止蝕可能失效")
             elif gap > 10:
                 lines.append(f"　下次業績：{ed}")
-        nw = news(t)
-        if nw:
+        nw = news(t, names.get(t, ""))
+        if nw is None:
+            lines.append("　📰 新聞攞唔到（資料來源出錯）")
+        elif nw:
             for x in nw:
                 w = x["when"].strftime("%m-%d") if x["when"] else ""
                 lines.append(f"　📰 {w} {x['title']}（{x['pub']}）{x['url']}")
         else:
             lines.append("　📰 最近3日冇新聞")
-        fl, link = filings(t)
-        lines.append(f"　📄 公告（7日內）：{filing_text(fl)}" + (f"\n　　{link}" if fl and link else ""))
+        fl = filings(t)
+        lines.append(f"　📄 公告（7日內）：{filing_text(fl)}" + (f"\n　　{fl[0]['url']}" if fl and fl[0]["url"] else ""))
         lines.append("")
-    lines += ["✅ 短炒參考：止蝕距離 0.7 至 1.2 個 ATR（唔太近、唔太遠）✅；回落嗰日成交量少過之前50日平均 1.2 倍 ✅；兩樣都符合 = ✅✅。"
+    lines += ["✅ 短炒參考：止蝕距離 0.7 至 1.2 個 ATR（唔太近、唔太遠）✅；最近5日下跌嗰幾日成交量少過之前50日平均 1.2 倍 ✅；兩樣都符合 = ✅✅。"
               "呢兩個係常見短炒講法，我哋未回測過。",
+              "公告來源：Yahoo 提供嘅美國證監會文件清單（唔包括高管買賣 Form 4）。新聞：Yahoo Finance（英文標題）。",
               "規則：今年升≥30% + 離52週最高位唔夠30% + 喺200日線上面；今日回落掂到10日線（最多高1%）+ 收市企喺20日線上面"
               " + 20日線向上；止蝕 = 今日最低價（太遠 >8% 唔要）。",
               "⚠️ 第三十七輪回測：呢個方法 2015 年起每年 -2.1%（跌穿10日線賣），未通過標準；只係觀察，唔會模擬交易。",

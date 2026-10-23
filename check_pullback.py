@@ -14,4 +14,3 @@ with contextlib.redirect_stdout(buf):
         import traceback
         traceback.print_exc(file=buf)
 open("check_pullback.txt", "w").write(buf.getvalue())
-print(buf.getvalue()[-6000:])

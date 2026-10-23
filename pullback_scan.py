@@ -315,7 +315,7 @@ def main():
         elif nw:
             for x in nw:
                 w = x["when"].strftime("%m-%d") if x["when"] else ""
-                lines.append(f"　📰 {w} {x['title']}（{x['pub']}）{x['url']}")
+                lines.append(f"　📰 {w} {x['title']}" + (f"（{x['pub']}）" if x["pub"] else "") + f" {x['url']}")
         else:
             lines.append("　📰 最近3日冇新聞")
         fl = filings(t)

@@ -1,11 +1,10 @@
-MPC news: 0 items; first keys: None
-MPC sec_filings: list len=79
-  first: {"date": "2026-08-04", "epochDate": 1785801600, "type": "8-K", "title": "Corporate Changes & Voting Matters", "edgarUrl": "https://finance.yahoo.com/sec-filing/MPC/0001510295-26-000060_1510295", "exhibits": {"8-K": "https://cdn.yahoofinance.com/prod/sec-filings/0001510295/000151029526000060/mpc-20260804.htm", "EX-99.1": "https://cdn.yahoofinance.com/prod/sec-filings/0001510295/000151029526000060/m
-DVA news: 0 items; first keys: None
-DVA sec_filings: list len=75
-  first: {"date": "2026-08-04", "epochDate": 1785801600, "type": "10-Q", "title": "Periodic Financial Reports", "edgarUrl": "https://finance.yahoo.com/sec-filing/DVA/0000927066-26-000108_927066", "exhibits": {"EX-31.1": "https://cdn.yahoofinance.com/prod/sec-filings/0000927066/000092706626000108/dva63026ex31110-q.htm", "EX-31.2": "https://cdn.yahoofinance.com/prod/sec-filings/0000927066/000092706626000108/
-AAPL news: 0 items; first keys: None
-AAPL sec_filings: list len=80
-  first: {"date": "2026-09-01", "epochDate": 1788220800, "type": "8-K/A", "title": "Corporate Changes & Voting Matters", "edgarUrl": "https://finance.yahoo.com/sec-filing/AAPL/0001140361-26-035325_320193", "exhibits": {"8-K/A": "https://cdn.yahoofinance.com/prod/sec-filings/0000320193/000114036126035325/ef20081427_8ka.htm"}, "maxAge": 1}
-https://www.sec.gov/files/company_tickers.json: 403 text/html '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">\n<html xmlns="http://www.w3.o'
-https://data.sec.gov/submissions/CIK0000927066.json: 403 text/html '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">\n<html xmlns="http://www.w3.o'
+yahoo_rss: 200 application/xml len=13647
+   - Thu, 22 Oct 2026 17:38:00 +0000 | DaVita Stock Gains 55.6% Year to Date: What's Behind the Rally?
+   - Thu, 22 Oct 2026 14:29:53 +0000 | Outpatient & specialty care stocks Q2 teardown: DaVita (NYSE:DVA) vs the rest
+   - Thu, 22 Oct 2026 13:27:32 +0000 | DaVita Earnings Preview: What to Expect
+google_rss: 200 application/xml; charset=utf-8 len=125505
+   - Thu, 22 Oct 2026 13:27:32 GMT | DaVita Earnings Preview: What to Expect - Yahoo Finance
+   - Thu, 22 Oct 2026 17:38:00 GMT | DaVita Stock Gains 55.6% Year to Date: What's Behind the Rally? - TradingView
+   - Tue, 20 Oct 2026 20:31:48 GMT | DaVita falls 6% amid proposed kidney care plan (DVA:NYSE) - Seeking Alpha
+nasdaq: 200 application/json; charset=utf-8 len=4316
+   {"data":{"rows":[{"title":"DaVita Stock Gains 55.6% Year to Date: What's Behind the Rally?","image":"","created":"Oct 22, 2026","ago":"18 hours ago","primarysymbol":"","primarytopic":"Stocks|4301","publisher":"Zacks","related_symbols":["dva|stocks","ew|stocks","gmed|stocks","gkos|stocks"],"url":"/ar

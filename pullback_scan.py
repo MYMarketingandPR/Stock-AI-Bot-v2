@@ -28,7 +28,7 @@ import prices as PR
 
 DONE = "paper_log/pullback_done.txt"
 LOG = "paper_log/pullback_signals.tsv"
-MAX_PICKS = 5
+MAX_PICKS = 10                      # 2026-10-23 Esther：由5隻改做10隻
 SEC_UA = {"User-Agent": "Stock-AI-Bot-v2 research 233071485+MYMarketingandPR@users.noreply.github.com"}
 FORM_ZH = {"4": "高管／大股東買賣股份", "144": "高管準備賣股", "8-K": "重大事件公告", "10-Q": "季度業績報告",
            "10-K": "年度報告", "SC 13G": "大股東持股變動", "SC 13D": "大股東持股變動（可能有意見）",
@@ -122,6 +122,24 @@ def next_earnings(t):
     return None
 
 
+SECTOR_ZH = {"Information Technology": "資訊科技", "Health Care": "醫療", "Financials": "金融", "Consumer Discretionary": "非必需消費",
+             "Consumer Staples": "必需消費", "Industrials": "工業", "Materials": "原材料", "Energy": "能源", "Utilities": "公用",
+             "Communication Services": "通訊服務", "Real Estate": "房地產"}
+
+
+def sectors():
+    """標普500成分股 → 行業（Wikipedia GICS Sector，中文）。攞唔到就回傳 {}。"""
+    import io
+    try:
+        html = requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+                            headers={"User-Agent": "Mozilla/5.0"}, timeout=30).text
+        t = pd.read_html(io.StringIO(html))[0]
+        return {str(a).replace(".", "-"): SECTOR_ZH.get(b, b) for a, b in zip(t["Symbol"], t["GICS Sector"])}
+    except Exception as e:
+        print(f"行業分類攞唔到：{e}")
+        return {}
+
+
 _CIK = None
 
 
@@ -177,15 +195,24 @@ def filing_text(fl):
     return "；".join(parts)
 
 
-def append_log(day, rows):
+def append_log(day, rows, sec):
     os.makedirs("paper_log", exist_ok=True)
-    new = not os.path.exists(LOG)
+    header = "date\tticker\tytd\tclose\tlow_stop\tma10\tma20\trisk_pct\tpicked\tsector\n"
+    if os.path.exists(LOG):
+        old = open(LOG).read().splitlines()
+        if old and not old[0].endswith("sector"):           # 2026-10-23 加咗行業欄：舊紀錄補空格
+            with open(LOG, "w") as f:
+                f.write(header + "".join(ln + "\t\n" for ln in old[1:]))
+        old_rows = [ln for ln in open(LOG).read().splitlines()[1:] if not ln.startswith(f"{day}\t")]
+        with open(LOG, "w") as f:                          # 同一日重跑就覆蓋返嗰日
+            f.write(header + "".join(ln + "\n" for ln in old_rows))
+    else:
+        with open(LOG, "w") as f:
+            f.write(header)
     with open(LOG, "a") as f:
-        if new:
-            f.write("date\tticker\tytd\tclose\tlow_stop\tma10\tma20\trisk_pct\tpicked\n")
         for t, s, picked in rows:
             f.write(f"{day}\t{t}\t{s['ytd'] * 100:.1f}\t{s['close']:.2f}\t{s['low']:.2f}\t{s['ma10']:.2f}\t{s['ma20']:.2f}\t"
-                    f"{s['risk'] * 100:.1f}\t{int(picked)}\n")
+                    f"{s['risk'] * 100:.1f}\t{int(picked)}\t{sec.get(t, '')}\n")
 
 
 def main():
@@ -223,17 +250,23 @@ def main():
     ok = sorted([t for t, s in sig.items() if not s["too_far"]], key=lambda t: -sig[t]["ytd"])
     far = [t for t, s in sig.items() if s["too_far"]]
     picks = ok[:MAX_PICKS]
-    append_log(day, [(t, sig[t], t in picks) for t in sorted(sig, key=lambda t: -sig[t]["ytd"])])
+    sec = sectors()
+    append_log(day, [(t, sig[t], t in picks) for t in sorted(sig, key=lambda t: -sig[t]["ytd"])], sec)
+    cnt = {}
+    for t in picks:
+        cnt[sec.get(t, "未知")] = cnt.get(sec.get(t, "未知"), 0) + 1
 
     lines = [f"🔍 *回調訊號掃描* {day}（標普500，收市後）", "",
              f"今日符合條件：{len(ok)} 隻" + (f"（另外 {len(far)} 隻止蝕太遠已剔走：{'、'.join(far[:6])}）" if far else "")
              + (f"；顯示今年升最多嘅 {len(picks)} 隻" if picks else ""),
-             f"（今日數據齊全度 {cover * 100:.0f}%）", ""]
+             f"（今日數據齊全度 {cover * 100:.0f}%）",
+             ("行業分佈：" + "、".join(f"{k} {v} 隻" for k, v in sorted(cnt.items(), key=lambda x: -x[1]))
+              + ("（⚠️ 有行業佔一半或以上，比較集中）" if picks and max(cnt.values()) * 2 >= len(picks) else "")) if picks else "", ""]
     if not picks:
         lines.append("⚪ 今日冇股票符合回調訊號。")
     for n, t in enumerate(picks, 1):
         s = sig[t]
-        lines.append(f"*{n}. {t}*（{names.get(t, '')}）今年 {s['ytd'] * 100:+.0f}%")
+        lines.append(f"*{n}. {t}*（{names.get(t, '')}｜{sec.get(t, '行業未知')}）今年 {s['ytd'] * 100:+.0f}%")
         lines.append(f"　收市 ${s['close']:,.2f} ｜ 今日最低 ${s['low']:,.2f} ｜ 10日線 ${s['ma10']:,.2f} ｜ 20日線 ${s['ma20']:,.2f}")
         lines.append(f"　止蝕位 ${s['low']:,.2f}（離收市 -{s['risk'] * 100:.1f}%）｜ 下一個交易日收市低過 ${s['low']:,.2f} 就唔買")
         ed = next_earnings(t)

@@ -74,6 +74,18 @@ def second_txt(g):
     return f"⚠️ 第二次倍升（之前一年 {g * 100:+.0f}%）" if g is not None and g >= 1.0 else ""
 
 
+def ma200_txt(s):
+    """2026-10-26 Esther 要求：股價 ≥ 200日線 × 2.6 就提醒（第四十一B輪：2000年起標普500只有15隻試過）。只係提醒，唔影響買賣。"""
+    if len(s) < 200:
+        return ""
+    r = float(s.iloc[-1]) / float(s.iloc[-200:].mean())
+    return f"⚠️ 股價係200日線 {r:.1f} 倍（≥2.6 倍，極罕見）" if r >= 2.6 else ""
+
+
+def flags(s):
+    return " ".join(x for x in [second_txt(prev_year(s)), ma200_txt(s)] if x)
+
+
 def e_levels(s):
     """線E：回傳（200日平均, 52週最高收市價 × 0.7）。"""
     return (float(s.iloc[-200:].mean()) if len(s) >= 200 else None, float(s.iloc[-252:].max()) * 0.7 if len(s) >= 200 else None)
@@ -147,7 +159,7 @@ def sheet_only(dry):
     for t, h in st["hold"].items():
         cost, val = h["shares"] * h["entry_px"], h["shares"] * h["last_px"]
         sx = px[t].dropna() if t in px.columns else pd.Series(dtype=float)
-        flag = second_txt(prev_year(sx))
+        flag = flags(sx)
         hold_rows.append([LABEL, t, (names.get(t, "") + (" " + flag if flag else "")).strip(), h["entry_date"], round(h["entry_px"], 2),
                           round(h["shares"], 4), round(cost, 2),
                           round(h["last_px"], 2), round(val, 2), round(val - cost, 2), round((h["last_px"] / h["entry_px"] - 1) * 100, 2),
@@ -165,7 +177,7 @@ def sheet_only(dry):
         rows.append([day, LABEL, "建議買入（下一個交易日收市）", t, names.get(t, ""), round(p, 2), round(per / p, 4), round(per, 2), "",
                      round(g * 100, 1) if g is not None else "",
                      "；".join(x for x in [("今年升≥30%，近52週高位，喺MA200上面" if IS_E else ("已升超過2倍（歷史上追入風險較高，規則照買）" if g and g > 2 else "倍升股")),
-                                           second_txt(prev_year(px[t].dropna()))] if x)])
+                                           flags(px[t].dropna())] if x)])
     if os.path.exists(TRADES):                    # 已執行嘅買賣：由紀錄檔重寫（價錢有改正都會更新）
         tr = pd.read_csv(TRADES, sep="\t")
         for _, x in tr.iterrows():
@@ -369,7 +381,7 @@ def main():
             r = (h["last_px"] / h["entry_px"] - 1) * 100
             now12 = r12_all.get(t, np.nan)
             sx = px[t].dropna() if t in px.columns else pd.Series(dtype=float)
-            flag = second_txt(prev_year(sx))
+            flag = flags(sx)
             if IS_E:
                 m, k = e_levels(sx)
                 sl = f"賣出線 ${max(m, k):,.2f}（200日線 ${m:,.2f}／高位×0.7 ${k:,.2f}）" if m is not None else "賣出線 —"
@@ -415,7 +427,7 @@ def main():
             p = float(last[t])
             g = float(r12[t])
             warn = " ⚠️ 已升超過2倍（歷史上追入風險較高，規則照買）" if g > 2.0 else ""
-            flag = second_txt(prev_year(px[t].dropna()))
+            flag = flags(px[t].dropna())
             ytxt = f"今年升 {st['pending_ytd'][t] * 100:+.0f}% ｜ " if IS_E else ""
             lines.append(f"• {t}（{names.get(t, '')}）{ytxt}過去12個月已升 {g * 100:+.0f}% ｜ 參考價 ${p:,.2f} ｜ 大約 {per / p:.2f} 股{warn}"
                          + (f" ｜ {flag}" if flag else ""))
@@ -436,6 +448,7 @@ def main():
             "規則：倍升股（12個月升≥100%）+ 喺MA50同MA200上面先買；由最高位跌20%就賣；揸最多5隻。"
             + ("（線D2：SPY每日訊號係「現金」嗰陣唔開新倉，用嚟同線D比較）" if SPY_GATE else ""))
     lines += ["", rule, "⚠️ 第二次倍升 = 之前一年都已經升 ≥100%，歷史上之後12個月中位數 -14.8%（只係提醒，唔影響買賣）。",
+              "⚠️ 股價 ≥ 200日線 2.6 倍 = 極罕見（2000年起標普500只有15隻試過，第四十一B輪）；只係提醒，唔影響買賣，你自己決定點處理。",
               "_模擬交易，唔係投資建議_"]
     SV.replace_group("現時持倉", SV.HOLD_HEADER, 1, [LABEL], hold_rows, dry)
     SV.upsert("每日總覽", SV.DAILY_HEADER, [[str(today), LABEL, round(nav, 2), round((nav / CAPITAL - 1) * 100, 2), round(dr_, 2),

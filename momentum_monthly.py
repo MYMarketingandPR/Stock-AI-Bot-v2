@@ -312,6 +312,8 @@ def daily_status(today, dry, send=True):
                     sa = sa[sa.index <= pd.Timestamp(today)]
                     if len(sa) >= 505 and sa.iloc[-253] / sa.iloc[-505] - 1 >= 1.0:
                         flag = f"⚠️ 第二次倍升（之前一年 {(sa.iloc[-253] / sa.iloc[-505] - 1) * 100:+.0f}%）"
+                    if len(sa) >= 200 and sa.iloc[-1] / sa.iloc[-200:].mean() >= 2.6:   # 2026-10-26：≥200日線2.6倍提醒（唔影響買賣）
+                        flag = (flag + " " if flag else "") + f"⚠️ 股價係200日線 {sa.iloc[-1] / sa.iloc[-200:].mean():.1f} 倍（≥2.6 倍，極罕見）"
                 lines.append(f"{k}. {t}（{names.get(t, '')}）買入 ${ep:,.2f} → 今日 ${cp:,.2f} ｜ {sh:.2f} 股 ｜ "
                              f"{val - alloc:+,.0f}（{(cp / ep - 1) * 100:+.1f}%）｜ 過去12個月 {g_now}" + (f" ｜ {flag}" if flag else ""))
                 hold_rows.append([f"線{tr}", t, (names.get(t, "") + (" " + flag if flag else "")).strip(), str(ed.date()), round(ep, 2), round(sh, 4), round(alloc, 2),
@@ -359,7 +361,8 @@ def daily_status(today, dry, send=True):
     SV.replace_group("現時持倉", SV.HOLD_HEADER, 1, [f"線{t}" for t in TRACKS] + ["輪動"], hold_rows, dry)
     SV.upsert("每日總覽", SV.DAILY_HEADER, [r + [f"{r[0]}|{r[1]}"] for r in daily_rows], dry)
     lines += ["", "冇止損，換倉日先換股。線A、線C嘅SPY部分跟「SPY每日訊號」。",
-              "⚠️ 第二次倍升 = 之前一年都已經升 ≥100%，歷史上之後12個月中位數 -14.8%（只係提醒，唔影響買賣）。", "_模擬交易，唔係投資建議_"]
+              "⚠️ 第二次倍升 = 之前一年都已經升 ≥100%，歷史上之後12個月中位數 -14.8%（只係提醒，唔影響買賣）。",
+              "⚠️ 股價 ≥ 200日線 2.6 倍 = 極罕見（2000年起標普500只有15隻試過，第四十一B輪）；只係提醒，唔影響買賣。", "_模擬交易，唔係投資建議_"]
     sections.append("\n".join(lines))
     send_sections(head, sections, dry or not send)
     return True

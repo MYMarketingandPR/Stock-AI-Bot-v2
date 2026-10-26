@@ -9,5 +9,6 @@ cmds = [["momentum_monthly.py", "--dry", "--tracks=NONE"]] + [["line_d.py", f"--
 for c in cmds:
     r = subprocess.run([sys.executable, "-u"] + c, capture_output=True, text=True)
     out.append(f"===== {' '.join(c)}（exit {r.returncode}）=====\n{r.stdout}\n{r.stderr[-2000:]}")
+subprocess.run("git reset -q --hard HEAD && git clean -fdq paper_log", shell=True)   # 還原，等結果可以放上 research-results
 open("check_ma200.txt", "w").write("\n".join(out))
 print("\n".join(out)[-5000:])

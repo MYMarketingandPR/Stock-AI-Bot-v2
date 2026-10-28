@@ -39,11 +39,18 @@ TRAIL = 0.20
 #   就唔買（已揸嘅照線E規則賣）。行業 = Wikipedia 標普500 GICS Sector；冇分類 = 當過關。回測冇達到「有改善」標準，只係觀察。
 # 線E3（2026-10-15 加，第三十四輪參考G0，Esther 要求觀察）：同線E一樣，但 SPY 每日訊號 = 「現金」就唔開新倉（同線D2一樣嘅閘門）。
 #   回測 2015起 +28.1% / -32.6%（同線E差唔多），2000-2009 +12.1% / -46%（線E +4.5% / -62%）；未經預先登記判斷，只係觀察。
-TAG = ("E3" if "--variant=E3" in sys.argv else "E2" if "--variant=E2" in sys.argv else "E" if "--variant=E" in sys.argv
+# 線E4（2026-10-28 加，第四十三輪W2，Esther 要求觀察）：買入同線E一樣；賣出改用「第二次周收市跌穿周線EMA21」（取代線E原本賣出條件）。
+#   周收市 = 每個星期最後一個交易日收市；周EMA21 = 周收市嘅21週指數平均。買入之後第一個收市跌穿嘅星期 = 第一次，
+#   之後要有最少一個星期收市喺上面，再跌穿 = 第二次 → 下一個交易日收市賣。賣出之後 20 個交易日內唔再買同一隻。
+#   每個星期五收市後檢查；如果星期五休市，就喺下個星期第一個交易日先檢查（遲一日，回測冇呢個分別）。
+#   回測 2015起 +31.8% / 最大跌幅 -39.9%（線E +28.7% / -32.6%），冇達「有改善」標準（跌幅差太多），只係觀察。
+TAG = ("E4" if "--variant=E4" in sys.argv else "E3" if "--variant=E3" in sys.argv else "E2" if "--variant=E2" in sys.argv else "E" if "--variant=E" in sys.argv
        else ("D2" if "--variant=D2" in sys.argv else "D"))
 LABEL = f"線{TAG}"
 SPY_GATE = TAG in ("D2", "E3")
-IS_E = TAG in ("E", "E2", "E3")
+IS_E = TAG in ("E", "E2", "E3", "E4")
+W_EMA = TAG == "E4"
+COOL_DAYS = 20
 SECTOR_GATE = TAG == "E2"
 SECTOR_ETF = {"Information Technology": "XLK", "Health Care": "XLV", "Financials": "XLF", "Consumer Discretionary": "XLY",
               "Consumer Staples": "XLP", "Industrials": "XLI", "Materials": "XLB", "Energy": "XLE", "Utilities": "XLU",
@@ -91,6 +98,45 @@ def e_levels(s):
     return (float(s.iloc[-200:].mean()) if len(s) >= 200 else None, float(s.iloc[-252:].max()) * 0.7 if len(s) >= 200 else None)
 
 
+def weekly_ema(s):
+    """線E4：回傳（周收市, 周EMA21）；index = 個星期嘅星期五。"""
+    w = s.resample("W-FRI").last().dropna()
+    return w, w.ewm(span=21, adjust=False, min_periods=21).mean()
+
+
+def wema_update(h, s, today):
+    """線E4：處理買入之後、已經完咗嘅星期（星期五 ≤ 今日），數「收市跌穿周EMA21」幾多次（連續幾個星期只算一次）。回傳次數。"""
+    w, e = weekly_ema(s)
+    start = pd.Timestamp(h["entry_date"]).to_period("W-FRI").end_time.normalize()
+    done = pd.Timestamp(h["w_last"]) if h.get("w_last") else None
+    for lab in w.index:
+        if lab < start or lab > pd.Timestamp(today) or (done is not None and lab <= done) or not np.isfinite(e[lab]):
+            continue
+        below = bool(w[lab] < e[lab])
+        if below and not h.get("w_prev", False):
+            h["w_n"] = h.get("w_n", 0) + 1
+        h["w_prev"] = below
+        h["w_last"] = str(lab.date())
+    return h.get("w_n", 0)
+
+
+def wema_txt(h, s):
+    w, e = weekly_ema(s)
+    if not len(e) or not np.isfinite(e.iloc[-1]):
+        return "周EMA21 —"
+    wk = "今個星期暫計" if w.index[-1] > s.index[-1] else f"{w.index[-1].strftime('%m-%d')}嗰個星期"
+    return (f"周EMA21 ${e.iloc[-1]:,.2f}（{wk}，收市 ${w.iloc[-1]:,.2f}）｜ "
+            f"買入後收市跌穿 {h.get('w_n', 0)} 次（第2次就賣）")
+
+
+def sell_reason(h=None):
+    if W_EMA:
+        return "第二次周收市跌穿周線EMA21"
+    if IS_E:
+        return "跌穿200日線或者離52週高位超過30%"
+    return f"由買入後最高收市 ${h['peak']:,.2f} 跌 ≥20%" if h else "由高位跌20%"
+
+
 def recent_high(t, day, n=42):
     """近期高位（只係顯示，唔影響買賣）：最近 n 個交易日（約兩個月，2026-10-14 用戶要求由一個月改做兩個月）嘅市中最高價，同埋係邊日。
     用未調整價（同券商App睇到嘅一樣）。攞唔到就回傳 (None, None)。"""
@@ -125,6 +171,8 @@ def sector_map():
 
 
 def sell_rule_txt(h, s):
+    if W_EMA:
+        return wema_txt(h, s) + "；周收市第二次跌穿就賣（下一個交易日收市）"
     if not IS_E:
         return f"收市 ≤ ${h['peak'] * (1 - TRAIL):,.2f} 就賣（由最高位跌20%，下一個交易日收市）"
     m, k = e_levels(s)
@@ -238,7 +286,8 @@ def main():
                 return float(v)
         return None
 
-    title = ("線E2：線E + 行業轉弱唔開新倉" if SECTOR_GATE else
+    title = ("線E4：線E買入 + 第二次周收市跌穿周EMA21先賣" if W_EMA else
+             "線E2：線E + 行業轉弱唔開新倉" if SECTOR_GATE else
              "線E3：線E + SPY訊號「持有」先開新倉" if TAG == "E3" else
              "線E：今年升≥30% + 離高位<30% + 喺MA200上面" if IS_E else
              "線D2：線D + SPY訊號「持有」先開新倉" if SPY_GATE else "線D：倍升股 + 由高位跌20%賣")
@@ -262,11 +311,11 @@ def main():
             ret = (p / h["entry_px"] - 1) * 100
             append_tsv(TRADES, {"date": str(today), "action": "賣出", "ticker": t, "price": round(p, 2),
                                 "shares": round(h["shares"], 4), "value": round(v, 2), "return_pct": round(ret, 2),
-                                "reason": "跌穿200日線或者離52週高位超過30%" if IS_E else "由高位跌20%"})
+                                "reason": sell_reason()})
             lines.append(f"✅ 已賣出 {t} @ ${p:,.2f}（今次 {ret:+.1f}%）")
             trade_rows.append([str(today), LABEL, "已賣出", t, names.get(t, ""), round(p, 2), round(h["shares"], 4), round(v, 2),
                                round(ret, 2), round(float(r12_all.get(t, np.nan)) * 100, 1) if np.isfinite(r12_all.get(t, np.nan)) else "",
-                               ("跌穿200日線或者離52週高位超過30%" if IS_E else f"由買入後最高收市 ${h['peak']:,.2f} 跌 ≥20%")
+                               sell_reason(h)
                                + f"（買入日 {h['entry_date']}，買入價 ${h['entry_px']:,.2f}）"])
             MM.sheet_row(today, TAG, t, "已賣出", ret, p, h["peak"], dry)
     total = st["cash"] + sum(h["shares"] * (price(t) or h["last_px"]) for t, h in st["hold"].items())
@@ -291,7 +340,7 @@ def main():
         lines.append(f"✅ 已買入 {t} @ ${p:,.2f}（約 {sh:.2f} 股，${amt:,.0f}；買入時過去12個月已升 {r12txt(r_in)}）")
         trade_rows.append([str(today), LABEL, "已買入", t, names.get(t, ""), round(p, 2), round(sh, 4), round(amt, 2), "",
                            round(r_in * 100, 1) if r_in is not None else "",
-                           "跌穿200日線或者低過52週最高位 × 0.7 就賣" if IS_E else f"賣出線 ${p * (1 - TRAIL):,.2f}（之後跟最高價 × 0.8 上移）"])
+                           "第二次周收市跌穿周線EMA21就賣" if W_EMA else "跌穿200日線或者低過52週最高位 × 0.7 就賣" if IS_E else f"賣出線 ${p * (1 - TRAIL):,.2f}（之後跟最高價 × 0.8 上移）"])
         MM.sheet_row(today, TAG, t, f"已買入（過去12個月已升{r12txt(r_in)}）",
                      r_in * 100 if r_in is not None else None, p, p * (1 - TRAIL), dry)
     st["pending_sell"], st["pending_buy"], st["pending_r12"], st["pending_ytd"] = list(carry_sell), [], {}, {}
@@ -309,7 +358,11 @@ def main():
     for t, h in st["hold"].items():
         if t in st["pending_sell"] or not price(t):
             continue
-        if IS_E:
+        if W_EMA:
+            if wema_update(h, px[t].dropna(), today) >= 2:
+                st["pending_sell"].append(t)
+                st.setdefault("cool", {})[t] = str(today)
+        elif IS_E:
             m, k = e_levels(px[t].dropna())
             if m is not None and (h["last_px"] < m or h["last_px"] < k):
                 st["pending_sell"].append(t)
@@ -355,11 +408,20 @@ def main():
                             + ("" if smap else "（⚠️ 今日攞唔到行業分類，全部當過關）"))
         else:
             sel = r12[(r12 >= 1.0) & (lastp > ma50) & (lastp > ma200)].sort_values(ascending=False)
+        cool_txt = ""
+        if W_EMA:                                  # 線E4：賣出決定之後 20 個交易日內唔再買同一隻
+            blocked = [t for t, d in st.get("cool", {}).items() if (px.index > pd.Timestamp(d)).sum() <= COOL_DAYS]
+            st["cool"] = {t: d for t, d in st.get("cool", {}).items() if t in blocked}
+            sel = sel[[t not in blocked for t in sel.index]]
+            if blocked:
+                cool_txt = "冷靜期（賣出後20個交易日唔再買）：" + "、".join(blocked)
         cands = [t for t in sel.index if t not in st["hold"]]
         st["pending_buy"] = cands[:free]
         st["pending_r12"] = {t: float(r12[t]) for t in st["pending_buy"]}
         if IS_E:
             st["pending_ytd"] = {t: float(ytd[t]) for t in st["pending_buy"]}
+        if cool_txt:
+            gate_txt = (gate_txt + "\n" if gate_txt else "") + cool_txt
     # 4) 訊息
     navs = pd.read_csv(NAV, sep="\t")
     nv = navs["nav"].values
@@ -376,13 +438,15 @@ def main():
     hold_rows = []
     lines.append("")
     if st["hold"]:
-        lines.append("*持倉*（" + ("賣出線 = 200日線同52週最高位×0.7 邊個高用邊個" if IS_E else "止賺/止蝕線 = 買入後最高收市 × 0.8") + "）")
+        lines.append("*持倉*（" + ("賣出 = 周收市第二次跌穿周線EMA21" if W_EMA else "賣出線 = 200日線同52週最高位×0.7 邊個高用邊個" if IS_E else "止賺/止蝕線 = 買入後最高收市 × 0.8") + "）")
         for t, h in st["hold"].items():
             r = (h["last_px"] / h["entry_px"] - 1) * 100
             now12 = r12_all.get(t, np.nan)
             sx = px[t].dropna() if t in px.columns else pd.Series(dtype=float)
             flag = flags(sx)
-            if IS_E:
+            if W_EMA:
+                sl = wema_txt(h, sx)
+            elif IS_E:
                 m, k = e_levels(sx)
                 sl = f"賣出線 ${max(m, k):,.2f}（200日線 ${m:,.2f}／高位×0.7 ${k:,.2f}）" if m is not None else "賣出線 —"
             else:
@@ -415,10 +479,10 @@ def main():
         trade_rows.append([str(today), LABEL, "建議賣出（下一個交易日收市）", t, names.get(t, ""), round(hh_["last_px"], 2),
                            round(hh_["shares"], 4), round(hh_["shares"] * hh_["last_px"], 2),
                            round((hh_["last_px"] / hh_["entry_px"] - 1) * 100, 2), "",
-                           "已跌穿200日線或者離52週高位超過30%" if IS_E else f"已由買入後最高收市 ${hh_['peak']:,.2f} 跌 ≥20%"])
+                           "已" + sell_reason(hh_)])
     if st["pending_sell"]:
         lines.append("🔴 *下一個交易日收市前賣出*：" + "、".join(
-            f"{t}（今日 ${st['hold'][t]['last_px']:,.2f}，" + ("已跌穿200日線或者離52週高位超過30%" if IS_E else "已由高位跌 ≥20%") + "）"
+            f"{t}（今日 ${st['hold'][t]['last_px']:,.2f}，已" + sell_reason(st['hold'][t]) + "）"
             for t in st["pending_sell"]))
     if st["pending_buy"]:
         per = nav / SLOTS
@@ -440,7 +504,11 @@ def main():
         lines.append("⚪ 明日唔使買賣。")
     if gate_txt:
         lines.append(gate_txt)
-    rule = ("規則：今年升≥30% + 離52週最高位唔夠30% + 喺200日線上面先買（揀今年升最多）；跌穿200日線或者離52週高位超過30%就賣；揸最多5隻。"
+    rule = ("規則：今年升≥30% + 離52週最高位唔夠30% + 喺200日線上面先買（揀今年升最多）；周收市第二次跌穿周線EMA21就賣"
+            "（買入後第一次跌穿之後，要有一個星期收返上去，再跌穿先算第二次）；賣出後20個交易日唔再買同一隻；揸最多5隻。"
+            "（第四十三輪W2回測 2015起 +31.8%/年、最大跌幅 -39.9%；線E +28.7% / -32.6%；冇達改善標準，只係觀察）"
+            if W_EMA else
+            "規則：今年升≥30% + 離52週最高位唔夠30% + 喺200日線上面先買（揀今年升最多）；跌穿200日線或者離52週高位超過30%就賣；揸最多5隻。"
             + ("（線E2 再加：嗰隻股所屬行業嘅ETF低過200日線就唔買；第三十三輪回測 +29.0%/年、最大跌幅 -32.9%，同線E差唔多，未達改善標準，只係觀察）"
                if SECTOR_GATE else
                "（線E3 再加：SPY每日訊號係「現金」嗰陣唔開新倉；第三十四輪參考回測 2015起 +28.1%/年、2000-2009 +12.1% / 最大跌幅 -46%，只係觀察）"

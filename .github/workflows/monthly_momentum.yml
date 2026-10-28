@@ -141,6 +141,16 @@ jobs:
         run: |
           if [ "${{ inputs.sheetonly }}" = "yes" ]; then python -u line_d.py --variant=E4 --sheet-only; else python -u line_d.py --variant=E4; fi
 
+      - name: 線E5（線E + 只買今年升30%至90%，2026-10-28 開始觀察）
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}
+          PAPER_CAPITAL: "80000"
+        run: |
+          if [ "${{ inputs.sheetonly }}" = "yes" ]; then python -u line_d.py --variant=E5 --sheet-only; else python -u line_d.py --variant=E5; fi
+
       - name: 月尾記低分析師EPS預測（自己儲歷史數據，第十四輪）
         continue-on-error: true
         run: |

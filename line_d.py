@@ -44,11 +44,15 @@ TRAIL = 0.20
 #   之後要有最少一個星期收市喺上面，再跌穿 = 第二次 → 下一個交易日收市賣。賣出之後 20 個交易日內唔再買同一隻。
 #   每個星期五收市後檢查；如果星期五休市，就喺下個星期第一個交易日先檢查（遲一日，回測冇呢個分別）。
 #   回測 2015起 +31.8% / 最大跌幅 -39.9%（線E +28.7% / -32.6%），冇達「有改善」標準（跌幅差太多），只係觀察。
-TAG = ("E4" if "--variant=E4" in sys.argv else "E3" if "--variant=E3" in sys.argv else "E2" if "--variant=E2" in sys.argv else "E" if "--variant=E" in sys.argv
+# 線E5（2026-10-28 加，第四十四輪C90，Esther 要求觀察）：同線E一樣，但只買今年升 +30% 至 +90% 嘅股（包埋兩邊；揀範圍入面升最多）；
+#   賣出同線E一樣（買咗之後升過90%唔會因此賣）。回測 2015起 +26.9% / -31.3%（線E +28.7% / -32.6%），2000-2009 +12.3%（線E +4.5%）；
+#   冇達「有改善」標準，而且 C110 差過 C90（可能有運氣成分），只係觀察。
+TAG = ("E5" if "--variant=E5" in sys.argv else "E4" if "--variant=E4" in sys.argv else "E3" if "--variant=E3" in sys.argv else "E2" if "--variant=E2" in sys.argv else "E" if "--variant=E" in sys.argv
        else ("D2" if "--variant=D2" in sys.argv else "D"))
 LABEL = f"線{TAG}"
 SPY_GATE = TAG in ("D2", "E3")
-IS_E = TAG in ("E", "E2", "E3", "E4")
+IS_E = TAG in ("E", "E2", "E3", "E4", "E5")
+YTD_CAP = 0.90 if TAG == "E5" else np.inf
 W_EMA = TAG == "E4"
 COOL_DAYS = 20
 SECTOR_GATE = TAG == "E2"
@@ -286,7 +290,8 @@ def main():
                 return float(v)
         return None
 
-    title = ("線E4：線E買入 + 第二次周收市跌穿周EMA21先賣" if W_EMA else
+    title = ("線E5：線E + 只買今年升30%至90%" if TAG == "E5" else
+             "線E4：線E買入 + 第二次周收市跌穿周EMA21先賣" if W_EMA else
              "線E2：線E + 行業轉弱唔開新倉" if SECTOR_GATE else
              "線E3：線E + SPY訊號「持有」先開新倉" if TAG == "E3" else
              "線E：今年升≥30% + 離高位<30% + 喺MA200上面" if IS_E else
@@ -391,7 +396,7 @@ def main():
             ye = p0[uni][p0.index.year < today.year].ffill().iloc[-1]          # 上年最後收市價
             ytd = lastp / ye - 1
             hi52 = p0[uni].iloc[-252:].max()
-            sel = ytd[(ytd >= 0.30) & (lastp >= hi52 * 0.7) & (lastp > ma200)].sort_values(ascending=False)
+            sel = ytd[(ytd >= 0.30) & (ytd <= YTD_CAP) & (lastp >= hi52 * 0.7) & (lastp > ma200)].sort_values(ascending=False)
             if SECTOR_GATE:                   # 線E2：行業ETF收市 < 200日平均 → 嗰個行業唔開新倉
                 smap = sector_map()
                 weak = []
@@ -512,7 +517,10 @@ def main():
             + ("（線E2 再加：嗰隻股所屬行業嘅ETF低過200日線就唔買；第三十三輪回測 +29.0%/年、最大跌幅 -32.9%，同線E差唔多，未達改善標準，只係觀察）"
                if SECTOR_GATE else
                "（線E3 再加：SPY每日訊號係「現金」嗰陣唔開新倉；第三十四輪參考回測 2015起 +28.1%/年、2000-2009 +12.1% / 最大跌幅 -46%，只係觀察）"
-               if TAG == "E3" else "（第二十六輪：2015年起回測 +28.7%/年，但 2000-2009 試過跌 -64%）") if IS_E else
+               if TAG == "E3" else
+               "（線E5 再加：今年升超過90%就唔買，已買嘅照線E規則賣；第四十四輪C90回測 2015起 +26.9%/年、最大跌幅 -31.3%，"
+               "2000-2009 +12.3%；未達改善標準，只係觀察）"
+               if TAG == "E5" else "（第二十六輪：2015年起回測 +28.7%/年，但 2000-2009 試過跌 -64%）") if IS_E else
             "規則：倍升股（12個月升≥100%）+ 喺MA50同MA200上面先買；由最高位跌20%就賣；揸最多5隻。"
             + ("（線D2：SPY每日訊號係「現金」嗰陣唔開新倉，用嚟同線D比較）" if SPY_GATE else ""))
     lines += ["", rule, "⚠️ 第二次倍升 = 之前一年都已經升 ≥100%，歷史上之後12個月中位數 -14.8%（只係提醒，唔影響買賣）。",

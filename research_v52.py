@@ -40,7 +40,11 @@ research_v52.py — 第五十二輪：CANSLIM 價量部分（N、L、S、M），
   - 倖存者偏差（已除牌嘅股票可能冇數據）。
 
 輸出：v52_events.csv、v52_results.csv、v52_progress.txt
-==== 結果（待跑）====
+==== 結果（2026-11-12 跑完，run 43146719148，記錄低，唔再改）====
+揀出 20 隻（按觸發日排序）：ABBV、AZO、BDX、DGX、MCK、NEE、SRE、GILD、PSA、REGN、UAA、APD、CMG、HD、M、MSFT、MU、NI、NOC、ROST。
+驗證期 2015–2026：CANSLIM 價量策略 +2.46%／最大跌幅 −8.1%／Sharpe 0.15；SPY 長揸 +13.67%／−33.7%／0.70；QQQ 長揸 +19.13%／−35.1%／0.82。
+賣出統計：只有 4 次賣出，平均 +5.8%，賺錢 50%，持有平均 55 日，賣後60日最高平均 +8.1%。
+判斷：唔合格（年化遠低於 SPY，冇跑贏基準）。跌幅細係因為大部分時間持現金，唔係策略有效；4 次賣出樣本太細，唔可以下結論。
 """
 import numpy as np
 import pandas as pd
